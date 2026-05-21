@@ -15,7 +15,15 @@ contextBridge.exposeInMainWorld('api', {
   trashFile: (filePath) => ipcRenderer.invoke('fs:trashFile', filePath),
   revealInFolder: (filePath) => ipcRenderer.invoke('shell:revealInFolder', filePath),
   showFileContextMenu: () => ipcRenderer.invoke('context:fileMenu'),
+  showEditorContextMenu: (opts) => ipcRenderer.invoke('context:editorMenu', opts),
   pathExists: (p) => ipcRenderer.invoke('fs:pathExists', p),
+  watchStart: (dirPath) => ipcRenderer.invoke('fs:watchStart', dirPath),
+  watchStop: () => ipcRenderer.invoke('fs:watchStop'),
+  onFsChanged: (cb) => {
+    const listener = (_evt, payload) => cb(payload);
+    ipcRenderer.on('fs:changed', listener);
+    return () => ipcRenderer.removeListener('fs:changed', listener);
+  },
   settings: {
     read: () => ipcRenderer.invoke('settings:read'),
     write: (obj) => ipcRenderer.invoke('settings:write', obj),

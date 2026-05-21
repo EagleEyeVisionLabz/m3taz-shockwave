@@ -1,6 +1,6 @@
 import { Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
-import { LINK_RE } from './linkIndex.js';
+import { LINK_RE, normalizeTarget } from './linkIndex.js';
 
 function splitLink(raw) {
   const [beforePipe, ...rest] = raw.split('|');
@@ -10,20 +10,25 @@ function splitLink(raw) {
 }
 
 class LinkWidget extends WidgetType {
-  constructor(targetName, display, onClick) {
+  constructor(targetName, display, resolved, onClick) {
     super();
     this.targetName = targetName;
     this.display = display;
+    this.resolved = resolved;
     this.onClick = onClick;
   }
 
   eq(other) {
-    return this.targetName === other.targetName && this.display === other.display;
+    return this.targetName === other.targetName
+      && this.display === other.display
+      && this.resolved === other.resolved;
   }
 
   toDOM() {
     const a = document.createElement('a');
-    a.className = 'cm-wiki-link';
+    a.className = this.resolved
+      ? 'cm-wiki-link'
+      : 'cm-wiki-link cm-wiki-link-unresolved';
     a.textContent = this.display;
     a.href = '#';
     a.addEventListener('mousedown', (e) => e.preventDefault());
@@ -39,7 +44,7 @@ class LinkWidget extends WidgetType {
   }
 }
 
-function buildDecorations(view, onClick) {
+function buildDecorations(view, onClick, pageIndex) {
   const builder = new RangeSetBuilder();
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
@@ -50,12 +55,13 @@ function buildDecorations(view, onClick) {
       while ((m = LINK_RE.exec(line.text)) !== null) {
         const { targetName, display } = splitLink(m[1]);
         if (!targetName) continue;
+        const resolved = pageIndex.has(normalizeTarget(targetName));
         const start = line.from + m.index;
         const end = start + m[0].length;
         builder.add(
           start,
           end,
-          Decoration.replace({ widget: new LinkWidget(targetName, display, onClick) })
+          Decoration.replace({ widget: new LinkWidget(targetName, display, resolved, onClick) })
         );
       }
       pos = line.to + 1;
@@ -64,15 +70,19 @@ function buildDecorations(view, onClick) {
   return builder.finish();
 }
 
-export function wikiLinks(onClick) {
+export function wikiLinks(onClick, getPageIndex) {
   return ViewPlugin.fromClass(
     class {
       constructor(view) {
-        this.decorations = buildDecorations(view, onClick);
+        this.pageIndex = getPageIndex();
+        this.decorations = buildDecorations(view, onClick, this.pageIndex);
       }
       update(update) {
-        if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildDecorations(update.view, onClick);
+        const pageIndex = getPageIndex();
+        // Identity changes when the tree changes (useMemo in useLinkIndex).
+        if (update.docChanged || update.viewportChanged || pageIndex !== this.pageIndex) {
+          this.pageIndex = pageIndex;
+          this.decorations = buildDecorations(update.view, onClick, pageIndex);
         }
       }
     },

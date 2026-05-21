@@ -212,6 +212,7 @@ export function createLinkIndex() {
   return {
     rebuild,
     updateFile,
+    applyParsedLinks,
     removeFile,
     renameFile,
     getBacklinks,

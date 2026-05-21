@@ -58,7 +58,10 @@ function Node({ node, style, dragHandle, onFileAction }) {
       ref={dragHandle}
       style={style}
       className={`tree-row ${node.isSelected ? 'selected' : ''}`}
-      onClick={() => (isFolder ? node.toggle() : node.select())}
+      onClick={() => {
+        node.select();
+        if (isFolder) node.toggle();
+      }}
       onDoubleClick={() => !isFolder && node.edit()}
       onContextMenu={handleContextMenu}
     >

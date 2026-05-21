@@ -1,14 +1,14 @@
 import React from 'react';
 
-export default function ThinSidebar({ onNewNote, onToggleGraph, graphMode, disabled }) {
+export default function ThinSidebar({ onNewPage, onToggleGraph, graphMode, disabled }) {
   return (
     <div className="thin-sidebar">
       <button
         className="thin-sidebar-btn"
-        onClick={onNewNote}
+        onClick={onNewPage}
         disabled={disabled}
-        title="New note"
-        aria-label="New note"
+        title="New page"
+        aria-label="New page"
       >
         <span aria-hidden="true">＋</span>
       </button>

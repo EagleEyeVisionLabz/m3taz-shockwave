@@ -5,9 +5,11 @@ import BacklinksPanel from './BacklinksPanel.jsx';
 import GraphView from './GraphView.jsx';
 import TabStrip from './TabStrip.jsx';
 import EditorTitle from './EditorTitle.jsx';
+import EditorNav from './EditorNav.jsx';
 import ThinSidebar from './ThinSidebar.jsx';
 import WorkspaceSelector from './WorkspaceSelector.jsx';
 import SettingsModal from './SettingsModal.jsx';
+import UrlPromptModal from './UrlPromptModal.jsx';
 import { prettyName } from './linkIndex.js';
 import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME } from './constants.js';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
@@ -57,11 +59,14 @@ export default function App() {
   const [workspaces, setWorkspaces] = useState([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState(null);
   const [tree, setTree] = useState([]);
+  const [selectedFolderPath, setSelectedFolderPath] = useState(null);
   const [graphMode, setGraphMode] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [titleDraft, setTitleDraft] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState(SETTINGS_SECTIONS.WORKSPACES);
+  // When set, renders <UrlPromptModal>. The function is the awaiting promise's resolver.
+  const [urlPromptResolve, setUrlPromptResolve] = useState(null);
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
@@ -124,7 +129,18 @@ export default function App() {
   const tabsApi = useTabs({ editorRef, writeNow, onAfterSwitch });
   const { activeFile, activeIsDraft, activeTab, openInActiveTab, openInNewTab, addDraftTab,
           switchTab, closeTab, closeTabsForPath, renameTabsPath, resetTabs,
-          promoteDraft, tabs, activeTabId } = tabsApi;
+          promoteDraft, tabs, activeTabId, goBack, goForward, canGoBack, canGoForward } = tabsApi;
+
+  const onBack = useCallback(() => { if (activeTabId) goBack(activeTabId); }, [activeTabId, goBack]);
+  const onForward = useCallback(() => { if (activeTabId) goForward(activeTabId); }, [activeTabId, goForward]);
+
+  // Where a new file should be created when promoting a draft.
+  // Priority: explicitly selected folder → dir of the active file → vault root.
+  const newFileDir = useCallback(() => {
+    if (selectedFolderPath) return selectedFolderPath;
+    if (activeFile) return dirOf(activeFile);
+    return workspacePath;
+  }, [selectedFolderPath, activeFile, workspacePath]);
 
   // ---- on editor change: schedule debounced save; promote drafts ----
   const onEditorChange = useCallback(() => {
@@ -135,7 +151,7 @@ export default function App() {
         try {
           const editor = editorRef.current;
           const currentText = editor?.getText() ?? '';
-          const newPath = await promoteDraft(activeTab.id, workspacePath, {
+          const newPath = await promoteDraft(activeTab.id, newFileDir(), {
             name: titleDraft || 'Untitled',
             initialContent: '',
           });
@@ -152,7 +168,7 @@ export default function App() {
     dirtyPathRef.current = activeFile;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => writeNow(), SAVE_DEBOUNCE_MS);
-  }, [activeTab, activeFile, writeNow, promoteDraft, workspacePath, titleDraft, linkIndex, showError]);
+  }, [activeTab, activeFile, writeNow, promoteDraft, newFileDir, titleDraft, linkIndex, showError]);
 
   // ---- refresh tree ----
   const refreshTree = useCallback(async () => {
@@ -178,9 +194,16 @@ export default function App() {
   });
 
   // ---- tree selection ----
+  // Folders set selectedFolderPath (used as target dir for new files).
+  // Files clear it and open in the active tab.
   const onSelect = useCallback(async (nodes) => {
     const node = nodes[0];
-    if (!node || node.children) return;
+    if (!node) return;
+    if (node.children) {
+      setSelectedFolderPath(node.id);
+      return;
+    }
+    setSelectedFolderPath(null);
     if (!node.data.name.toLowerCase().endsWith('.md')) return;
     if (graphMode) setGraphMode(false);
     await openInActiveTab(node.id);
@@ -197,8 +220,10 @@ export default function App() {
 
   const loadWorkspace = useCallback(async (workspace) => {
     await writeNow();
+    await window.api.watchStop();
     resetTabs();
     setTree([]);
+    setSelectedFolderPath(null);
     setGraphMode(false);
     const [treeData, files] = await Promise.all([
       window.api.readTree(workspace.path),
@@ -206,6 +231,7 @@ export default function App() {
     ]);
     setTree(treeData);
     linkIndex.rebuild(files);
+    await window.api.watchStart(workspace.path);
   }, [writeNow, resetTabs, linkIndex]);
 
   const switchWorkspace = useCallback(async (id) => {
@@ -250,6 +276,8 @@ export default function App() {
       setActiveWorkspaceId(null);
       resetTabs();
       setTree([]);
+      setSelectedFolderPath(null);
+      await window.api.watchStop();
     }
     await persistSettings({ workspaces: next, activeWorkspaceId: newActive, themeMode });
   }, [workspaces, activeWorkspaceId, persistSettings, themeMode, resetTabs]);
@@ -266,7 +294,7 @@ export default function App() {
       try {
         const editor = editorRef.current;
         const text = editor?.getText() ?? '';
-        const newPath = await promoteDraft(activeTab.id, workspacePath, {
+        const newPath = await promoteDraft(activeTab.id, newFileDir(), {
           name: newName,
           initialContent: text,
         });
@@ -279,7 +307,7 @@ export default function App() {
     }
     if (!activeFile) return;
     await fileOps.performRename(activeFile, newName);
-  }, [activeTab, activeFile, workspacePath, linkIndex, promoteDraft, fileOps, showError]);
+  }, [activeTab, activeFile, newFileDir, linkIndex, promoteDraft, fileOps, showError]);
 
   // ---- graph toggle ----
   const onToggleGraph = useCallback(async () => {
@@ -287,11 +315,27 @@ export default function App() {
     setGraphMode((g) => !g);
   }, [writeNow]);
 
-  // ---- new note (thin sidebar) ----
-  const onNewNote = useCallback(async () => {
+  // ---- new page (thin sidebar) ----
+  const onNewPage = useCallback(async () => {
     if (!workspacePath) return;
     await addDraftTab();
   }, [workspacePath, addDraftTab]);
+
+  // ---- URL prompt (used by editor "Add external link") ----
+  const requestUrl = useCallback(() => {
+    return new Promise((resolve) => {
+      // Wrap the resolver so React's setState doesn't try to invoke it.
+      setUrlPromptResolve(() => resolve);
+    });
+  }, []);
+
+  const handleUrlSubmit = useCallback((url) => {
+    setUrlPromptResolve((prev) => { prev?.(url); return null; });
+  }, []);
+
+  const handleUrlCancel = useCallback(() => {
+    setUrlPromptResolve((prev) => { prev?.(null); return null; });
+  }, []);
 
   // ---- settings open helpers ----
   // Pass an explicit section to land on a specific page; omit to defer to the modal's
@@ -307,6 +351,51 @@ export default function App() {
     window.addEventListener('beforeunload', flush);
     return () => window.removeEventListener('beforeunload', flush);
   }, [writeNow]);
+
+  // ---- external file change subscription ----
+  //
+  // Watcher events fall into three buckets:
+  //   - {type:'add'|'change', path, mtime, outgoingLinks}  — .md file appeared or modified
+  //   - {type:'unlink', path}                              — .md file removed
+  //   - {type:'tree'}                                       — folder change / non-.md (tree refresh only)
+  //
+  // Self-echo guard: every renderer-initiated write triggers a watcher event ~350ms
+  // later. The renderer has already called linkIndex.updateFile with a Date.now()
+  // mtime, so the echo's stat.mtimeMs will be <= the stored mtime. We compare and
+  // skip stale events so the echo can't clobber fresh in-memory state.
+  useEffect(() => {
+    if (!workspacePath) return undefined;
+    let refreshTimer = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        refreshTree();
+      }, 80);
+    };
+    const unsub = window.api.onFsChanged((evt) => {
+      if (evt.type === 'tree') {
+        scheduleRefresh();
+        return;
+      }
+      if (evt.type === 'unlink') {
+        linkIndex.removeFile(evt.path);
+        scheduleRefresh();
+        return;
+      }
+      // 'add' | 'change'
+      const stored = linkIndex.linkIndexRef.current.getMtime(evt.path);
+      if (stored == null || evt.mtime > stored) {
+        linkIndex.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
+      }
+      if (evt.type === 'add') scheduleRefresh();
+    });
+    return () => {
+      unsub();
+      if (refreshTimer) clearTimeout(refreshTimer);
+    };
+    // linkIndex methods are stable useCallbacks; linkIndexRef is a stable useRef.
+  }, [workspacePath, refreshTree, linkIndex.applyParsedLinks, linkIndex.removeFile, linkIndex.linkIndexRef]);
 
   // ---- boot: load settings + subscribe to system theme ----
   useEffect(() => {
@@ -412,7 +501,7 @@ export default function App() {
   return (
     <div className="app">
       <ThinSidebar
-        onNewNote={onNewNote}
+        onNewPage={onNewPage}
         onToggleGraph={onToggleGraph}
         graphMode={graphMode}
         disabled={!workspacePath}
@@ -470,6 +559,12 @@ export default function App() {
         ) : workspacePath ? (
           <>
             <div className={activeTab ? '' : 'editor-zone-hidden'}>
+              <EditorNav
+                onBack={onBack}
+                onForward={onForward}
+                canGoBack={canGoBack}
+                canGoForward={canGoForward}
+              />
               <EditorTitle
                 value={titleDraft}
                 onChange={setTitleDraft}
@@ -478,7 +573,7 @@ export default function App() {
               />
               {titleConflict && (
                 <div className="title-conflict">
-                  There's already a file with the same name
+                  There's already a page with the same name
                 </div>
               )}
             </div>
@@ -489,6 +584,7 @@ export default function App() {
                 onChange={onEditorChange}
                 getPageIndexRef={linkIndex.pageIndexRef}
                 getVaultPathRef={workspacePathRef}
+                onRequestUrl={requestUrl}
                 dark={isDark}
               />
             </div>
@@ -500,10 +596,10 @@ export default function App() {
               />
             ) : (
               <div className="no-tab-cta">
-                <button className="create-note-btn" onClick={onNewNote}>
-                  + Create new note
+                <button className="create-page-btn" onClick={onNewPage}>
+                  + Create new page
                 </button>
-                <div className="no-tab-hint">or pick a file from the sidebar</div>
+                <div className="no-tab-hint">or pick a page from the sidebar</div>
               </div>
             )}
           </>
@@ -513,6 +609,10 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {urlPromptResolve && (
+        <UrlPromptModal onSubmit={handleUrlSubmit} onCancel={handleUrlCancel} />
+      )}
 
       {settingsOpen && (
         <SettingsModal

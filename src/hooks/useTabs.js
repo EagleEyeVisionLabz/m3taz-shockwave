@@ -4,7 +4,11 @@ let nextTabId = 1;
 const makeTabId = () => `t${nextTabId++}`;
 
 /**
- * Owns: tabs, activeTabId, viewStateByPath.
+ * Owns: tabs, activeTabId, viewStateByPath, and per-tab navigation history.
+ *
+ * Tab shape: { id, path, isDraft, history: string[], historyIndex: number }.
+ * `history`/`historyIndex` model browser-style back/forward inside a single tab.
+ * Drafts have history: [] / historyIndex: -1; back/forward are disabled.
  *
  * Does NOT load content into the editor — that's done by App via an effect that watches
  * activeFile and writes via the editor's imperative `setContent` API. This keeps the
@@ -23,6 +27,8 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
   const activeTab = tabs.find((t) => t.id === activeTabId) || null;
   const activeFile = activeTab?.path ?? null;
   const activeIsDraft = !!activeTab?.isDraft;
+  const canGoBack = !!activeTab && activeTab.historyIndex > 0;
+  const canGoForward = !!activeTab && activeTab.historyIndex < activeTab.history.length - 1;
 
   // Capture the editor's view state for the currently-active file BEFORE we change tabs.
   const captureCurrentViewState = useCallback(() => {
@@ -34,7 +40,17 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
   }, [activeFile, editorRef]);
 
   const renameTabsPath = useCallback((oldPath, newPath) => {
-    setTabs((prev) => prev.map((t) => (t.path === oldPath ? { ...t, path: newPath, isDraft: false } : t)));
+    setTabs((prev) => prev.map((t) => {
+      const touchesPath = t.path === oldPath;
+      const touchesHistory = t.history.includes(oldPath);
+      if (!touchesPath && !touchesHistory) return t;
+      return {
+        ...t,
+        path: touchesPath ? newPath : t.path,
+        isDraft: touchesPath ? false : t.isDraft,
+        history: touchesHistory ? t.history.map((p) => (p === oldPath ? newPath : p)) : t.history,
+      };
+    }));
     const vs = viewStateByPath.current.get(oldPath);
     if (vs !== undefined) {
       viewStateByPath.current.set(newPath, vs);
@@ -49,11 +65,22 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
       if (prev.length === 0) {
         const id = makeTabId();
         setActiveTabId(id);
-        return [{ id, path: filePath, isDraft: false }];
+        return [{ id, path: filePath, isDraft: false, history: [filePath], historyIndex: 0 }];
       }
-      return prev.map((t) =>
-        t.id === activeTabId ? { ...t, path: filePath, isDraft: false } : t,
-      );
+      return prev.map((t) => {
+        if (t.id !== activeTabId) return t;
+        // Truncate forward history, then push (skip if it would duplicate the current entry).
+        const truncated = t.history.slice(0, t.historyIndex + 1);
+        const top = truncated[truncated.length - 1];
+        const nextHistory = top === filePath ? truncated : [...truncated, filePath];
+        return {
+          ...t,
+          path: filePath,
+          isDraft: false,
+          history: nextHistory,
+          historyIndex: nextHistory.length - 1,
+        };
+      });
     });
     onAfterSwitch?.();
   }, [writeNow, activeTabId, captureCurrentViewState, onAfterSwitch]);
@@ -62,7 +89,7 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     await writeNow();
     captureCurrentViewState();
     const id = makeTabId();
-    setTabs((prev) => [...prev, { id, path: filePath, isDraft: false }]);
+    setTabs((prev) => [...prev, { id, path: filePath, isDraft: false, history: [filePath], historyIndex: 0 }]);
     setActiveTabId(id);
     onAfterSwitch?.();
   }, [writeNow, captureCurrentViewState, onAfterSwitch]);
@@ -71,7 +98,7 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     await writeNow();
     captureCurrentViewState();
     const id = makeTabId();
-    setTabs((prev) => [...prev, { id, path: null, isDraft: true }]);
+    setTabs((prev) => [...prev, { id, path: null, isDraft: true, history: [], historyIndex: -1 }]);
     setActiveTabId(id);
     onAfterSwitch?.();
   }, [writeNow, captureCurrentViewState, onAfterSwitch]);
@@ -103,12 +130,33 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
 
   const closeTabsForPath = useCallback((filePath) => {
     setTabs((prev) => {
-      const next = prev.filter((t) => t.path !== filePath);
-      if (next.length === prev.length) return prev;
       const activeWasClosed = prev.find((t) => t.id === activeTabId)?.path === filePath;
+      const next = [];
+      for (const t of prev) {
+        if (t.path === filePath) continue;
+        if (!t.history.includes(filePath)) {
+          next.push(t);
+          continue;
+        }
+        // Purge deleted path from this tab's history; shift the index for each removed entry at or before it.
+        const nextHistory = [];
+        let nextIndex = t.historyIndex;
+        for (let i = 0; i < t.history.length; i++) {
+          if (t.history[i] === filePath) {
+            if (i <= t.historyIndex) nextIndex--;
+          } else {
+            nextHistory.push(t.history[i]);
+          }
+        }
+        next.push({
+          ...t,
+          history: nextHistory,
+          historyIndex: Math.max(-1, Math.min(nextIndex, nextHistory.length - 1)),
+        });
+      }
+      if (next.length === prev.length) return prev;
       if (activeWasClosed) {
-        if (next.length === 0) setActiveTabId(null);
-        else setActiveTabId(next[0].id);
+        setActiveTabId(next.length === 0 ? null : next[0].id);
       }
       return next;
     });
@@ -120,6 +168,28 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     setActiveTabId(null);
     viewStateByPath.current.clear();
   }, []);
+
+  const goBack = useCallback(async (tabId) => {
+    await writeNow();
+    captureCurrentViewState();
+    setTabs((prev) => prev.map((t) => {
+      if (t.id !== tabId || t.historyIndex <= 0) return t;
+      const nextIndex = t.historyIndex - 1;
+      return { ...t, path: t.history[nextIndex], historyIndex: nextIndex };
+    }));
+    onAfterSwitch?.();
+  }, [writeNow, captureCurrentViewState, onAfterSwitch]);
+
+  const goForward = useCallback(async (tabId) => {
+    await writeNow();
+    captureCurrentViewState();
+    setTabs((prev) => prev.map((t) => {
+      if (t.id !== tabId || t.historyIndex >= t.history.length - 1) return t;
+      const nextIndex = t.historyIndex + 1;
+      return { ...t, path: t.history[nextIndex], historyIndex: nextIndex };
+    }));
+    onAfterSwitch?.();
+  }, [writeNow, captureCurrentViewState, onAfterSwitch]);
 
   /**
    * Promote a draft tab to a real file on disk. Returns the new path.
@@ -133,7 +203,11 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     const work = (async () => {
       const cleanName = (name || 'Untitled').replace(/\.md$/i, '').trim() || 'Untitled';
       const newPath = await window.api.createFile(vaultPath, `${cleanName}.md`, initialContent);
-      setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, path: newPath, isDraft: false } : t)));
+      setTabs((prev) => prev.map((t) => (
+        t.id === tabId
+          ? { ...t, path: newPath, isDraft: false, history: [newPath], historyIndex: 0 }
+          : t
+      )));
       return newPath;
     })();
     promotionInFlight.current.set(tabId, work);
@@ -150,6 +224,8 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     activeTab,
     activeFile,
     activeIsDraft,
+    canGoBack,
+    canGoForward,
     setActiveTabId,
     setTabs,
     openInActiveTab,
@@ -162,6 +238,8 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     captureCurrentViewState,
     resetTabs,
     promoteDraft,
+    goBack,
+    goForward,
     viewStateByPath,
   };
 }

@@ -1,16 +1,23 @@
 import { Decoration, ViewPlugin, WidgetType } from '@codemirror/view';
 import { RangeSetBuilder } from '@codemirror/state';
 
-const TASK_RE = /^(\s*[-*+]\s+)\[([ xX])\]/;
+// A task item: list marker (`- `, `* `, `+ `) followed by `[ ]` or `[x]`.
+// The bullet prefix is required (matches GFM/CommonMark); the whole
+// `bullet [ ]` range is replaced with the widget so `- [ ] foo` collapses to
+// `☐ foo`. Group 1: leading whitespace. Group 2: bullet + space. Group 3: state.
+const TASK_RE = /^(\s*)([-*+]\s+)\[([ xX])\]/;
 
 class CheckboxWidget extends WidgetType {
-  constructor(checked) {
+  constructor(checked, prefixLength) {
     super();
     this.checked = checked;
+    // Number of chars in the optional bullet prefix (0, or e.g. 2 for `- `).
+    // The `[` lives at pos+prefixLength; the toggle char is at pos+prefixLength+1.
+    this.prefixLength = prefixLength;
   }
 
   eq(other) {
-    return this.checked === other.checked;
+    return this.checked === other.checked && this.prefixLength === other.prefixLength;
   }
 
   toDOM(view) {
@@ -26,11 +33,12 @@ class CheckboxWidget extends WidgetType {
     box.addEventListener('click', (e) => {
       e.preventDefault();
       const pos = view.posAtDOM(box);
-      const snippet = view.state.doc.sliceString(pos, pos + 3);
+      const bracketStart = pos + this.prefixLength;
+      const snippet = view.state.doc.sliceString(bracketStart, bracketStart + 3);
       if (!/^\[[ xX]\]$/.test(snippet)) return;
       const newChar = this.checked ? ' ' : 'x';
       view.dispatch({
-        changes: { from: pos + 1, to: pos + 2, insert: newChar },
+        changes: { from: bracketStart + 1, to: bracketStart + 2, insert: newChar },
       });
     });
 
@@ -50,13 +58,13 @@ function buildDecorations(view) {
       const line = view.state.doc.lineAt(pos);
       const match = line.text.match(TASK_RE);
       if (match) {
-        const bracketStart = line.from + match[1].length;
-        const bracketEnd = bracketStart + 3;
-        const checked = match[2] === 'x' || match[2] === 'X';
+        const start = line.from + match[1].length;
+        const end = start + match[2].length + 3;
+        const checked = match[3] === 'x' || match[3] === 'X';
         builder.add(
-          bracketStart,
-          bracketEnd,
-          Decoration.replace({ widget: new CheckboxWidget(checked) })
+          start,
+          end,
+          Decoration.replace({ widget: new CheckboxWidget(checked, match[2].length) })
         );
       }
       pos = line.to + 1;

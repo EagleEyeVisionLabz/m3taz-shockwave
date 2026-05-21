@@ -8,8 +8,10 @@ import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { taskCheckboxes } from './taskCheckboxes.js';
+import { bulletPoints } from './bulletPoints.js';
 import { wikiLinks } from './wikiLinks.js';
 import { wikiLinkCompletions } from './wikiCompletions.js';
+import { EDITOR_ACTIONS } from './constants.js';
 
 /**
  * Imperative editor wrapper.
@@ -28,17 +30,59 @@ import { wikiLinkCompletions } from './wikiCompletions.js';
  *   clear()                        — empties the doc, resets cursor
  */
 const Editor = forwardRef(function Editor(
-  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, dark },
+  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, onRequestUrl, dark },
   ref,
 ) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const linkClickRef = useRef(onLinkClick);
   const changeRef = useRef(onChange);
+  const requestUrlRef = useRef(onRequestUrl);
   const isProgrammaticRef = useRef(false);
 
   useEffect(() => { linkClickRef.current = onLinkClick; }, [onLinkClick]);
   useEffect(() => { changeRef.current = onChange; }, [onChange]);
+  useEffect(() => { requestUrlRef.current = onRequestUrl; }, [onRequestUrl]);
+
+  const handleContextMenu = async (e) => {
+    e.preventDefault();
+    const view = viewRef.current;
+    if (!view) return;
+    const { from, to } = view.state.selection.main;
+    const hasSelection = from !== to;
+    const action = await window.api.showEditorContextMenu({ hasSelection });
+    if (!action) return;
+    if (action === EDITOR_ACTIONS.ADD_LINK) {
+      const selected = view.state.sliceDoc(from, to);
+      const insert = `[[${selected}]]`;
+      // Empty selection → cursor between brackets so the user can type the name.
+      // Non-empty selection → cursor after the closing ]] so typing continues normally.
+      const anchor = selected ? from + insert.length : from + 2;
+      view.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return;
+    }
+    if (action === EDITOR_ACTIONS.ADD_EXTERNAL_LINK) {
+      // Capture {from,to} BEFORE opening the modal — focus leaves the editor.
+      const selected = view.state.sliceDoc(from, to);
+      const url = await requestUrlRef.current?.();
+      if (!url) { view.focus(); return; }
+      const v2 = viewRef.current;
+      if (!v2) return;
+      const text = selected || url;
+      const insert = `[${text}](${url})`;
+      v2.dispatch({
+        changes: { from, to, insert },
+        selection: { anchor: from + insert.length },
+        scrollIntoView: true,
+      });
+      v2.focus();
+    }
+  };
 
   useImperativeHandle(ref, () => ({
     getText: () => viewRef.current?.state.doc.toString() ?? '',
@@ -105,7 +149,11 @@ const Editor = forwardRef(function Editor(
       markdown(),
       syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
       taskCheckboxes,
-      wikiLinks((name) => linkClickRef.current?.(name)),
+      bulletPoints,
+      wikiLinks(
+        (name) => linkClickRef.current?.(name),
+        () => getPageIndexRef?.current ?? new Map(),
+      ),
       autocompletion({
         override: [completionSource],
         activateOnTyping: true,
@@ -134,6 +182,9 @@ const Editor = forwardRef(function Editor(
         '.cm-content': { paddingLeft: '4px' },
         '.cm-gutters': { backgroundColor: 'transparent', borderRight: 'none' },
         '.cm-lineNumbers': { paddingLeft: '8px', paddingRight: '12px' },
+        // Reserve room for up to 4-digit line numbers so the gutter width doesn't
+        // jump when the line count crosses 9→10, 99→100, or 999→1000.
+        '.cm-lineNumbers .cm-gutterElement': { minWidth: '4ch', boxSizing: 'content-box' },
       }),
     ];
     if (dark) extensions.push(oneDark);
@@ -148,7 +199,7 @@ const Editor = forwardRef(function Editor(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dark]);
 
-  return <div ref={hostRef} className="editor-host" />;
+  return <div ref={hostRef} className="editor-host" onContextMenu={handleContextMenu} />;
 });
 
 export default Editor;

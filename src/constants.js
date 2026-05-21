@@ -10,6 +10,12 @@ export const FILE_ACTIONS = Object.freeze({
   DELETE: 'delete',
 });
 
+// Keep in sync with electron/main.js EDITOR_ACTIONS.
+export const EDITOR_ACTIONS = Object.freeze({
+  ADD_LINK: 'addLink',
+  ADD_EXTERNAL_LINK: 'addExternalLink',
+});
+
 export const SETTINGS_SECTIONS = Object.freeze({
   WORKSPACES: 'workspaces',
   APPEARANCE: 'appearance',

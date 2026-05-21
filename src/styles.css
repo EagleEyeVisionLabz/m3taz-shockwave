@@ -298,6 +298,40 @@ html, body, #root {
 
 .editor-host { flex-shrink: 0; }
 
+.editor-nav {
+  display: flex;
+  gap: 2px;
+  /* Negative left margin nudges the buttons so the icon glyphs visually align with the title text at 56px. */
+  padding: 12px 14px 0 50px;
+  flex-shrink: 0;
+}
+
+.editor-nav-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 14px;
+  line-height: 1;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.editor-nav-btn:not(:disabled):hover {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.editor-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
 .editor-title {
   display: block;
   width: 100%;
@@ -307,7 +341,7 @@ html, body, #root {
   font-size: 30px;
   font-weight: 700;
   color: var(--fg-primary);
-  padding: 48px 14px 20px 56px;
+  padding: 16px 14px 20px 56px;
   font-family: inherit;
   flex-shrink: 0;
   line-height: 1.2;
@@ -432,6 +466,14 @@ html, body, #root {
   accent-color: var(--accent);
 }
 
+.cm-bullet {
+  display: inline-block;
+  width: 1ch;
+  text-align: center;
+  color: var(--accent);
+  font-weight: bold;
+}
+
 .cm-wiki-link {
   color: var(--accent);
   text-decoration: underline;
@@ -442,6 +484,10 @@ html, body, #root {
   background: var(--accent-soft);
   border-radius: 3px;
   padding: 0 2px;
+}
+.cm-wiki-link-unresolved {
+  opacity: 0.5;
+  text-decoration-style: dashed;
 }
 
 /* ---------- Backlinks ---------- */
@@ -533,7 +579,7 @@ html, body, #root {
   color: var(--fg-secondary);
 }
 
-.create-note-btn {
+.create-page-btn {
   padding: 12px 24px;
   background: var(--accent);
   color: #ffffff;
@@ -544,7 +590,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-.create-note-btn:hover { filter: brightness(1.05); }
+.create-page-btn:hover { filter: brightness(1.05); }
 
 .no-tab-hint {
   font-size: 12px;
@@ -561,6 +607,77 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.url-prompt-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.url-prompt-modal {
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  width: min(440px, 90vw);
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-popover);
+}
+
+.url-prompt-label {
+  display: block;
+  font-size: 13px;
+  color: var(--fg-secondary);
+  margin-bottom: 8px;
+}
+
+.url-prompt-input {
+  width: 100%;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-input, var(--bg-app));
+  color: var(--fg-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-sizing: border-box;
+}
+.url-prompt-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.url-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.url-prompt-cancel,
+.url-prompt-ok {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+.url-prompt-cancel {
+  background: transparent;
+  color: var(--fg-primary);
+}
+.url-prompt-ok {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+.url-prompt-ok:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .settings-modal {

@@ -11,8 +11,8 @@ export default function WorkspacesSection({
     <div className="settings-section">
       <h2 className="settings-section-title">Workspaces</h2>
       <p className="settings-section-desc">
-        Workspaces let you switch between different folders of notes. Each workspace keeps its own
-        files and link graph. The folder on disk is never modified by adding or removing a workspace
+        Workspaces let you switch between different folders of pages. Each workspace keeps its own
+        pages and link graph. The folder on disk is never modified by adding or removing a workspace
         from this list.
       </p>
 

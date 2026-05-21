@@ -39,6 +39,11 @@ export function useLinkIndex(tree) {
     bump();
   }, [bump]);
 
+  const applyParsedLinks = useCallback((path, outgoingLinks, mtime) => {
+    linkIndexRef.current.applyParsedLinks(path, outgoingLinks, mtime);
+    bump();
+  }, [bump]);
+
   const removeFile = useCallback((path) => {
     linkIndexRef.current.removeFile(path);
     bump();
@@ -71,6 +76,7 @@ export function useLinkIndex(tree) {
     version,
     bump,
     updateFile,
+    applyParsedLinks,
     removeFile,
     renameFile,
     rebuild,

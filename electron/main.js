@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const chokidar = require('chokidar');
 const { parseLinks } = require('./linkParser');
 
 // Keep in sync with src/constants.js APP_NAME and package.json productName.
@@ -50,6 +51,12 @@ const FILE_ACTIONS = Object.freeze({
   REVEAL: 'reveal',
   RENAME: 'rename',
   DELETE: 'delete',
+});
+
+// Keep in sync with src/constants.js EDITOR_ACTIONS.
+const EDITOR_ACTIONS = Object.freeze({
+  ADD_LINK: 'addLink',
+  ADD_EXTERNAL_LINK: 'addExternalLink',
 });
 
 function createWindow() {
@@ -182,7 +189,7 @@ ipcMain.handle('fs:renameFile', async (_evt, { fromPath, toName }) => {
     if (err.code !== 'ENOENT') throw err;
   }
   if (exists) {
-    throw new Error(`A file named "${finalName}" already exists in this folder.`);
+    throw new Error(`A page named "${finalName}" already exists in this folder.`);
   }
   await fs.rename(fromPath, target);
   return target;
@@ -203,9 +210,9 @@ ipcMain.handle('fs:trashFile', async (evt, filePath) => {
   const name = path.basename(filePath);
   const result = await dialog.showMessageBox(win, {
     type: 'warning',
-    title: 'Delete file',
+    title: 'Delete page',
     message: `Delete "${name}"?`,
-    detail: 'The file will be moved to the Trash.',
+    detail: 'The page will be moved to the Trash.',
     buttons: ['Cancel', 'Delete'],
     defaultId: 0,
     cancelId: 0,
@@ -245,6 +252,27 @@ ipcMain.handle('context:fileMenu', async (evt) => {
   });
 });
 
+ipcMain.handle('context:editorMenu', async (evt, { hasSelection } = {}) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  return new Promise((resolve) => {
+    let chosen = null;
+    const menu = Menu.buildFromTemplate([
+      { label: 'Add link',          click: () => { chosen = EDITOR_ACTIONS.ADD_LINK; } },
+      { label: 'Add external link', click: () => { chosen = EDITOR_ACTIONS.ADD_EXTERNAL_LINK; } },
+      { type: 'separator' },
+      { role: 'cut',   enabled: hasSelection },
+      { role: 'copy',  enabled: hasSelection },
+      { role: 'paste' },
+      { type: 'separator' },
+      { role: 'selectAll' },
+    ]);
+    menu.on('menu-will-close', () => {
+      setImmediate(() => resolve(chosen));
+    });
+    menu.popup({ window: win });
+  });
+});
+
 ipcMain.handle('settings:read', async () => {
   return readSettings();
 });
@@ -261,6 +289,129 @@ ipcMain.handle('fs:pathExists', async (_evt, p) => {
     return false;
   }
 });
+
+// ---- workspace file watcher ----
+//
+// One watcher per app. Per CLAUDE.md "Link index": main pre-parses .md files
+// and ships {path, mtime, outgoingLinks} rows to the renderer. The watcher
+// reuses that same pattern for incremental updates — see parseLinks above.
+//
+// Events are coalesced per-path within WATCH_DEBOUNCE_MS so a burst of writes
+// (atomic rename, multi-file save) collapses to one notification per path.
+
+const WATCH_DEBOUNCE_MS = 150;
+let currentWatcher = null;
+let watcherRootDir = null;
+let watcherWindowId = null;
+let pendingByPath = new Map();    // path -> 'add' | 'change' | 'unlink'
+let pendingTreeOnly = false;       // folder events or non-.md events
+let flushTimer = null;
+
+function senderWindow() {
+  if (watcherWindowId == null) return null;
+  const win = BrowserWindow.fromId(watcherWindowId);
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function scheduleFlush() {
+  if (flushTimer) return;
+  flushTimer = setTimeout(flushWatcher, WATCH_DEBOUNCE_MS);
+}
+
+async function flushWatcher() {
+  flushTimer = null;
+  const win = senderWindow();
+  const entries = [...pendingByPath.entries()];
+  const treeOnly = pendingTreeOnly;
+  pendingByPath.clear();
+  pendingTreeOnly = false;
+  if (!win) return;
+
+  for (const [p, type] of entries) {
+    if (type === 'unlink') {
+      win.webContents.send('fs:changed', { type: 'unlink', path: p });
+      continue;
+    }
+    try {
+      const [content, stat] = await Promise.all([
+        fs.readFile(p, 'utf8'),
+        fs.stat(p),
+      ]);
+      win.webContents.send('fs:changed', {
+        type,                         // 'add' | 'change'
+        path: p,
+        mtime: stat.mtimeMs,
+        outgoingLinks: parseLinks(content),
+      });
+    } catch {
+      // file may have been deleted between event and read
+    }
+  }
+
+  if (treeOnly && entries.length === 0) {
+    win.webContents.send('fs:changed', { type: 'tree' });
+  }
+}
+
+function recordFileEvent(type, p) {
+  if (p.toLowerCase().endsWith('.md')) {
+    const prev = pendingByPath.get(p);
+    if (type === 'unlink') {
+      pendingByPath.set(p, 'unlink');
+    } else if (type === 'add') {
+      pendingByPath.set(p, prev === 'unlink' ? 'change' : 'add');
+    } else {
+      // change
+      pendingByPath.set(p, prev === 'add' ? 'add' : 'change');
+    }
+  } else {
+    pendingTreeOnly = true;
+  }
+  scheduleFlush();
+}
+
+async function stopWatcher() {
+  if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+  pendingByPath.clear();
+  pendingTreeOnly = false;
+  if (currentWatcher) {
+    const w = currentWatcher;
+    currentWatcher = null;
+    try { await w.close(); } catch { /* ignore close errors */ }
+  }
+  watcherRootDir = null;
+  watcherWindowId = null;
+}
+
+ipcMain.handle('fs:watchStart', async (evt, dirPath) => {
+  await stopWatcher();
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  if (!win) return;
+  watcherWindowId = win.id;
+  watcherRootDir = dirPath;
+  currentWatcher = chokidar.watch(dirPath, {
+    ignored: (p) => {
+      // Skip if any path segment within the watched root starts with '.'
+      // (mirrors buildTree's dotfile rule, including .git, .obsidian, etc.).
+      const rel = path.relative(dirPath, p);
+      if (!rel || rel.startsWith('..')) return false;
+      return rel.split(path.sep).some((seg) => seg.startsWith('.'));
+    },
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+    persistent: true,
+  });
+  currentWatcher
+    .on('add', (p) => recordFileEvent('add', p))
+    .on('change', (p) => recordFileEvent('change', p))
+    .on('unlink', (p) => recordFileEvent('unlink', p))
+    .on('addDir', () => { pendingTreeOnly = true; scheduleFlush(); })
+    .on('unlinkDir', () => { pendingTreeOnly = true; scheduleFlush(); });
+});
+
+ipcMain.handle('fs:watchStop', stopWatcher);
+
+app.on('before-quit', () => { stopWatcher(); });
 
 ipcMain.handle('theme:getInitial', () => ({
   dark: nativeTheme.shouldUseDarkColors,
