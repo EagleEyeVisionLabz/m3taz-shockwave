@@ -182,9 +182,9 @@ const Editor = forwardRef(function Editor(
         '.cm-content': { paddingLeft: '4px' },
         '.cm-gutters': { backgroundColor: 'transparent', borderRight: 'none' },
         '.cm-lineNumbers': { paddingLeft: '8px', paddingRight: '12px' },
-        // Reserve room for up to 4-digit line numbers so the gutter width doesn't
-        // jump when the line count crosses 9→10, 99→100, or 999→1000.
-        '.cm-lineNumbers .cm-gutterElement': { minWidth: '4ch', boxSizing: 'content-box' },
+        // Reserve room for up to 5-digit line numbers so the gutter width stays
+        // stable through 1 → 10 → 100 → 1000 → 10000 lines.
+        '.cm-lineNumbers .cm-gutterElement': { minWidth: '5ch', boxSizing: 'content-box' },
       }),
     ];
     if (dark) extensions.push(oneDark);

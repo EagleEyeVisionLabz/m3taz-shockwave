@@ -1,6 +1,11 @@
 * { box-sizing: border-box; }
 
 :root {
+  /* Shared left edge for the title, editor text, and backlinks panel.
+     Must match the editor's gutter+content width. The gutter reserves 5 digits
+     (see `.cm-lineNumbers .cm-gutterElement` minWidth in Editor.jsx). */
+  --text-col-left: 66px;
+
   --bg-app: #ffffff;
   --bg-sidebar: #f5f5f7;
   --bg-thin: #ebebef;
@@ -149,6 +154,17 @@ html, body, #root {
 }
 .tree-row:hover { background: var(--bg-hover); }
 .tree-row.selected { background: var(--bg-row-selected); color: var(--fg-on-active-row); }
+
+.tree-row.drop-target {
+  background: var(--accent-soft);
+  outline: 2px dashed var(--accent);
+  outline-offset: -3px;
+  border-radius: 4px;
+}
+.tree-row.drop-target .tree-name {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 .tree-caret {
   width: 18px;
@@ -341,7 +357,7 @@ html, body, #root {
   font-size: 30px;
   font-weight: 700;
   color: var(--fg-primary);
-  padding: 16px 14px 20px 56px;
+  padding: 16px 14px 20px var(--text-col-left);
   font-family: inherit;
   flex-shrink: 0;
   line-height: 1.2;
@@ -352,7 +368,7 @@ html, body, #root {
 .title-conflict {
   width: fit-content;
   max-width: calc(100% - 70px);
-  margin: -6px 0 16px 56px;
+  margin: -6px 0 16px var(--text-col-left);
   background: #d93636;
   color: #ffffff;
   padding: 8px 14px;
@@ -494,7 +510,7 @@ html, body, #root {
 
 .backlinks-section {
   flex-shrink: 0;
-  padding: 5em 14px 18px;
+  padding: 5em 14px 18px var(--text-col-left);
 }
 
 .backlinks-header {
@@ -579,7 +595,7 @@ html, body, #root {
   color: var(--fg-secondary);
 }
 
-.create-page-btn {
+.create-file-btn {
   padding: 12px 24px;
   background: var(--accent);
   color: #ffffff;
@@ -590,7 +606,7 @@ html, body, #root {
   cursor: pointer;
 }
 
-.create-page-btn:hover { filter: brightness(1.05); }
+.create-file-btn:hover { filter: brightness(1.05); }
 
 .no-tab-hint {
   font-size: 12px;

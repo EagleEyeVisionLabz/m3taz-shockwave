@@ -41,9 +41,9 @@ Edits are debounced (`SAVE_DEBOUNCE_MS = 500` in `App.jsx`) via `dirtyPathRef` +
 
 **`electron/linkParser.js` is a CommonJS mirror of the parser pieces in `src/linkIndex.js`.** If you change `LINK_RE`, `normalizeTarget`, `parseLinks`, `leadingWidth`, or `collectContext` in one, change both. The file comment calls this out.
 
-Renames rewrite incoming `[[oldName]]` references across all files that link to the renamed page before the on-disk rename happens (`src/renameOps.js`). The regex preserves `#heading` and `|alias` suffixes.
+Renames rewrite incoming `[[oldName]]` references across all files that link to the renamed file before the on-disk rename happens (`src/renameOps.js`). The regex preserves `#heading` and `|alias` suffixes.
 
-**Terminology:** the user-facing concept is a **page** (a single `.md` document in the vault). Use "page" in UI strings, dialog text, and user-facing copy. "File" / "note" should not appear in user-visible text. Code identifiers (`useFileOps`, `FILE_ACTIONS`, `FileTree`, `writeFile`, `readFile`, etc.) keep "file" — those refer to filesystem files, which they are.
+**Terminology:** the user-facing term is **file**. Use "file" in UI strings, dialog text, button labels, and user-visible copy ("New file", "Delete file", "There's already a file with the same name", etc.). "Page" and "note" should not appear in user-visible text — they were earlier conventions that have been retired.
 
 ### Invariants when touching files/links
 

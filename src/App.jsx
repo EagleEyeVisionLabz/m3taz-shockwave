@@ -11,7 +11,7 @@ import WorkspaceSelector from './WorkspaceSelector.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import UrlPromptModal from './UrlPromptModal.jsx';
 import { prettyName } from './linkIndex.js';
-import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME } from './constants.js';
+import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS } from './constants.js';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
@@ -99,6 +99,8 @@ export default function App() {
 
   // ---- editor ref ----
   const editorRef = useRef(null);
+  // ---- file tree ref (imperative API: editNode(id)) ----
+  const fileTreeRef = useRef(null);
 
   // ---- save lifecycle (stays in App, crosses concerns) ----
   const dirtyPathRef = useRef(null);
@@ -128,7 +130,7 @@ export default function App() {
 
   const tabsApi = useTabs({ editorRef, writeNow, onAfterSwitch });
   const { activeFile, activeIsDraft, activeTab, openInActiveTab, openInNewTab, addDraftTab,
-          switchTab, closeTab, closeTabsForPath, renameTabsPath, resetTabs,
+          switchTab, closeTab, closeTabsForPath, closeTabsUnderPath, renameTabsPath, resetTabs,
           promoteDraft, tabs, activeTabId, goBack, goForward, canGoBack, canGoForward } = tabsApi;
 
   const onBack = useCallback(() => { if (activeTabId) goBack(activeTabId); }, [activeTabId, goBack]);
@@ -315,11 +317,136 @@ export default function App() {
     setGraphMode((g) => !g);
   }, [writeNow]);
 
-  // ---- new page (thin sidebar) ----
-  const onNewPage = useCallback(async () => {
+  // ---- new file (thin sidebar) ----
+  const onNewFile = useCallback(async () => {
     if (!workspacePath) return;
     await addDraftTab();
   }, [workspacePath, addDraftTab]);
+
+  // ---- create a folder + put it into rename mode ----
+  const createFolderAt = useCallback(async (dirPath) => {
+    try {
+      const newPath = await window.api.createFolder(dirPath, 'New folder');
+      await fileOps.treeAndIndexChanged();
+      fileTreeRef.current?.editNode(newPath);
+    } catch (err) {
+      showError(err.message ?? String(err));
+    }
+  }, [fileOps, showError]);
+
+  // ---- folder context-menu actions (right-click on a tree folder) ----
+  const onFolderAction = useCallback(async (action, folderPath) => {
+    try {
+      if (action === FOLDER_ACTIONS.NEW_FILE) {
+        setSelectedFolderPath(folderPath);
+        await addDraftTab();
+      } else if (action === FOLDER_ACTIONS.NEW_FOLDER) {
+        await createFolderAt(folderPath);
+      } else if (action === FOLDER_ACTIONS.REVEAL) {
+        await window.api.revealInFolder(folderPath);
+      } else if (action === FOLDER_ACTIONS.RENAME) {
+        fileTreeRef.current?.editNode(folderPath);
+      } else if (action === FOLDER_ACTIONS.DELETE) {
+        const confirmed = await window.api.trashFolder(folderPath);
+        if (!confirmed) return;
+        // Sweep up any link-index entries inside the trashed folder so
+        // backlinks/graph drop them immediately (don't wait for the watcher).
+        const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+        const outgoing = linkIndex.linkIndexRef.current.getOutgoingMap();
+        const affected = [];
+        for (const p of outgoing.keys()) {
+          if (p.startsWith(prefix)) affected.push(p);
+        }
+        for (const p of affected) linkIndex.linkIndexRef.current.removeFile(p);
+        closeTabsUnderPath(folderPath);
+        // Clear the selected folder if it's the one we just trashed.
+        if (selectedFolderPath && (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix))) {
+          setSelectedFolderPath(null);
+        }
+        await fileOps.treeAndIndexChanged();
+      }
+    } catch (err) {
+      showError(err.message ?? String(err));
+    }
+  }, [addDraftTab, createFolderAt, closeTabsUnderPath, fileOps, linkIndex, selectedFolderPath, showError]);
+
+  // ---- new folder from thin sidebar (root level, or current selected folder) ----
+  const onNewFolder = useCallback(async () => {
+    if (!workspacePath) return;
+    const dir = selectedFolderPath || workspacePath;
+    await createFolderAt(dir);
+  }, [workspacePath, selectedFolderPath, createFolderAt]);
+
+  // ---- handle drag-and-drop moves from the tree ----
+  // dragIds = list of source paths (files or folders). destFolderId is the destination
+  // folder's path, or null for the workspace root.
+  const onMoveItems = useCallback(async (dragIds, destFolderId) => {
+    const destDir = destFolderId ?? workspacePath;
+    if (!destDir) return;
+    const affectedRenames = []; // [{oldPath, newPath}] for FILES (immediate + nested)
+
+    for (const src of dragIds) {
+      try {
+        // No-op: dropping into the current parent.
+        if (dirOf(src) === destDir) continue;
+        // No-op: dropping a folder onto itself.
+        if (src === destDir) continue;
+        // Capture every linkIndex entry currently under this src (files + folder contents).
+        const outgoing = linkIndex.linkIndexRef.current.getOutgoingMap();
+        const insideSrc = [];
+        const srcAsDir = src.endsWith('/') ? src : src + '/';
+        for (const p of outgoing.keys()) {
+          if (p === src || p.startsWith(srcAsDir)) insideSrc.push(p);
+        }
+
+        const newPath = await window.api.moveItem(src, destDir);
+        const newAsDir = newPath.endsWith('/') ? newPath : newPath + '/';
+
+        // For folders: the folder rename causes every nested .md path to change.
+        // For files: insideSrc contains just the file itself (if it was in the index).
+        for (const oldP of insideSrc) {
+          const suffix = oldP === src ? '' : oldP.slice(srcAsDir.length);
+          const newP = suffix ? (newAsDir + suffix) : newPath;
+          linkIndex.linkIndexRef.current.renameFile(oldP, newP);
+          renameTabsPath(oldP, newP);
+          affectedRenames.push({ oldPath: oldP, newPath: newP });
+        }
+
+        // Selected folder might have moved — track it.
+        if (selectedFolderPath === src) setSelectedFolderPath(newPath);
+        else if (selectedFolderPath && selectedFolderPath.startsWith(srcAsDir)) {
+          setSelectedFolderPath(newAsDir + selectedFolderPath.slice(srcAsDir.length));
+        }
+      } catch (err) {
+        showError(err.message ?? String(err));
+      }
+    }
+
+    if (affectedRenames.length > 0 || dragIds.length > 0) {
+      await fileOps.treeAndIndexChanged();
+    }
+  }, [workspacePath, linkIndex, renameTabsPath, fileOps, selectedFolderPath, showError]);
+
+  // Disallow dropping ONTO a leaf node (you can only drop into folders).
+  const disableDrop = useCallback(({ parentNode }) => {
+    if (!parentNode) return false; // root drop is fine
+    return !parentNode.isInternal;
+  }, []);
+
+  // ---- handle rename commits from the tree (files OR folders) ----
+  const onTreeRename = useCallback(async ({ id, name }) => {
+    const isFolder = !id.toLowerCase().endsWith('.md');
+    if (isFolder) {
+      try {
+        await window.api.renameFolder(id, name);
+        await fileOps.treeAndIndexChanged();
+      } catch (err) {
+        showError(err.message ?? String(err));
+      }
+      return;
+    }
+    return fileOps.performRename(id, name);
+  }, [fileOps, showError]);
 
   // ---- URL prompt (used by editor "Add external link") ----
   const requestUrl = useCallback(() => {
@@ -501,7 +628,8 @@ export default function App() {
   return (
     <div className="app">
       <ThinSidebar
-        onNewPage={onNewPage}
+        onNewFile={onNewFile}
+        onNewFolder={onNewFolder}
         onToggleGraph={onToggleGraph}
         graphMode={graphMode}
         disabled={!workspacePath}
@@ -511,10 +639,14 @@ export default function App() {
         <div className="tree-wrap">
           {tree.length > 0 ? (
             <FileTree
+              ref={fileTreeRef}
               data={tree}
               onSelect={onSelect}
-              onRename={({ id, name }) => fileOps.performRename(id, name)}
+              onRename={onTreeRename}
               onFileAction={fileOps.onFileAction}
+              onFolderAction={onFolderAction}
+              onMoveItems={onMoveItems}
+              disableDrop={disableDrop}
             />
           ) : (
             <div className="empty">
@@ -573,7 +705,7 @@ export default function App() {
               />
               {titleConflict && (
                 <div className="title-conflict">
-                  There's already a page with the same name
+                  There's already a file with the same name
                 </div>
               )}
             </div>
@@ -596,10 +728,10 @@ export default function App() {
               />
             ) : (
               <div className="no-tab-cta">
-                <button className="create-page-btn" onClick={onNewPage}>
-                  + Create new page
+                <button className="create-file-btn" onClick={onNewFile}>
+                  + Create new file
                 </button>
-                <div className="no-tab-hint">or pick a page from the sidebar</div>
+                <div className="no-tab-hint">or pick a file from the sidebar</div>
               </div>
             )}
           </>

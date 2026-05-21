@@ -163,6 +163,45 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     viewStateByPath.current.delete(filePath);
   }, [activeTabId]);
 
+  // Close every tab whose current path is inside the given folder; purge folder paths from history too.
+  const closeTabsUnderPath = useCallback((folderPath) => {
+    const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+    const inFolder = (p) => typeof p === 'string' && p.startsWith(prefix);
+    setTabs((prev) => {
+      const activeTab = prev.find((t) => t.id === activeTabId);
+      const activeWasClosed = activeTab && inFolder(activeTab.path);
+      const next = [];
+      for (const t of prev) {
+        if (inFolder(t.path)) continue;
+        const hasFolderInHistory = t.history.some(inFolder);
+        if (!hasFolderInHistory) { next.push(t); continue; }
+        const nextHistory = [];
+        let nextIndex = t.historyIndex;
+        for (let i = 0; i < t.history.length; i++) {
+          if (inFolder(t.history[i])) {
+            if (i <= t.historyIndex) nextIndex--;
+          } else {
+            nextHistory.push(t.history[i]);
+          }
+        }
+        next.push({
+          ...t,
+          history: nextHistory,
+          historyIndex: Math.max(-1, Math.min(nextIndex, nextHistory.length - 1)),
+        });
+      }
+      if (next.length === prev.length && !next.some((t, i) => t !== prev[i])) return prev;
+      if (activeWasClosed) {
+        setActiveTabId(next.length === 0 ? null : next[0].id);
+      }
+      // Drop view-state entries for all removed paths.
+      for (const t of prev) {
+        if (inFolder(t.path)) viewStateByPath.current.delete(t.path);
+      }
+      return next;
+    });
+  }, [activeTabId]);
+
   const resetTabs = useCallback(() => {
     setTabs([]);
     setActiveTabId(null);
@@ -234,6 +273,7 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     switchTab,
     closeTab,
     closeTabsForPath,
+    closeTabsUnderPath,
     renameTabsPath,
     captureCurrentViewState,
     resetTabs,

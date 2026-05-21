@@ -59,6 +59,15 @@ const EDITOR_ACTIONS = Object.freeze({
   ADD_EXTERNAL_LINK: 'addExternalLink',
 });
 
+// Keep in sync with src/constants.js FOLDER_ACTIONS.
+const FOLDER_ACTIONS = Object.freeze({
+  NEW_FILE: 'newFile',
+  NEW_FOLDER: 'newFolder',
+  REVEAL: 'reveal',
+  RENAME: 'rename',
+  DELETE: 'delete',
+});
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1200,
@@ -189,7 +198,7 @@ ipcMain.handle('fs:renameFile', async (_evt, { fromPath, toName }) => {
     if (err.code !== 'ENOENT') throw err;
   }
   if (exists) {
-    throw new Error(`A page named "${finalName}" already exists in this folder.`);
+    throw new Error(`A file named "${finalName}" already exists in this folder.`);
   }
   await fs.rename(fromPath, target);
   return target;
@@ -205,14 +214,40 @@ ipcMain.handle('fs:duplicateFile', async (_evt, filePath) => {
   return target;
 });
 
+ipcMain.handle('fs:trashFolder', async (evt, folderPath) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  const name = path.basename(folderPath);
+  let entries = [];
+  try {
+    entries = (await fs.readdir(folderPath)).filter((n) => !n.startsWith('.'));
+  } catch {
+    entries = [];
+  }
+  const isEmpty = entries.length === 0;
+  const result = await dialog.showMessageBox(win, {
+    type: 'warning',
+    title: 'Delete folder',
+    message: `Delete "${name}"?`,
+    detail: isEmpty
+      ? 'The folder will be moved to the Trash.'
+      : `"${name}" contains items. Everything inside will be moved to the Trash.`,
+    buttons: ['Cancel', 'Delete'],
+    defaultId: 0,
+    cancelId: 0,
+  });
+  if (result.response !== 1) return false;
+  await shell.trashItem(folderPath);
+  return true;
+});
+
 ipcMain.handle('fs:trashFile', async (evt, filePath) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   const name = path.basename(filePath);
   const result = await dialog.showMessageBox(win, {
     type: 'warning',
-    title: 'Delete page',
+    title: 'Delete file',
     message: `Delete "${name}"?`,
-    detail: 'The page will be moved to the Trash.',
+    detail: 'The file will be moved to the Trash.',
     buttons: ['Cancel', 'Delete'],
     defaultId: 0,
     cancelId: 0,
@@ -250,6 +285,84 @@ ipcMain.handle('context:fileMenu', async (evt) => {
     });
     menu.popup({ window: win });
   });
+});
+
+ipcMain.handle('context:folderMenu', async (evt) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  return new Promise((resolve) => {
+    let chosen = null;
+    const menu = Menu.buildFromTemplate([
+      { label: 'New file', click: () => { chosen = FOLDER_ACTIONS.NEW_FILE; } },
+      { label: 'New folder', click: () => { chosen = FOLDER_ACTIONS.NEW_FOLDER; } },
+      { type: 'separator' },
+      { label: revealLabel(), click: () => { chosen = FOLDER_ACTIONS.REVEAL; } },
+      { type: 'separator' },
+      { label: 'Rename', click: () => { chosen = FOLDER_ACTIONS.RENAME; } },
+      { label: 'Delete', click: () => { chosen = FOLDER_ACTIONS.DELETE; } },
+    ]);
+    menu.on('menu-will-close', () => {
+      setImmediate(() => resolve(chosen));
+    });
+    menu.popup({ window: win });
+  });
+});
+
+ipcMain.handle('fs:createFolder', async (_evt, { dirPath, name = 'New folder' }) => {
+  let candidate = path.join(dirPath, name);
+  let i = 1;
+  while (true) {
+    try {
+      await fs.access(candidate);
+      candidate = path.join(dirPath, `${name} ${i}`);
+      i++;
+    } catch {
+      break;
+    }
+  }
+  await fs.mkdir(candidate, { recursive: true });
+  return candidate;
+});
+
+ipcMain.handle('fs:moveItem', async (_evt, { srcPath, destDir }) => {
+  const name = path.basename(srcPath);
+  const target = path.join(destDir, name);
+  if (target === srcPath) return target;
+  // Reject moving a folder into itself or its own descendant.
+  if (target.startsWith(srcPath + path.sep)) {
+    throw new Error('Cannot move a folder into itself.');
+  }
+  let exists = false;
+  try {
+    await fs.access(target);
+    exists = true;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (exists) {
+    throw new Error(`"${name}" already exists in this folder.`);
+  }
+  await fs.rename(srcPath, target);
+  return target;
+});
+
+ipcMain.handle('fs:renameFolder', async (_evt, { fromPath, toName }) => {
+  const dir = path.dirname(fromPath);
+  const finalName = toName.trim();
+  if (!finalName) throw new Error('Name cannot be empty');
+  const target = path.join(dir, finalName);
+  if (target === fromPath) return target;
+  let exists = false;
+  try {
+    await fs.access(target);
+    exists = true;
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  if (exists) {
+    throw new Error(`A folder named "${finalName}" already exists in this location.`);
+  }
+  await fs.rename(fromPath, target);
+  return target;
 });
 
 ipcMain.handle('context:editorMenu', async (evt, { hasSelection } = {}) => {

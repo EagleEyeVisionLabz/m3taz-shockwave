@@ -10,6 +10,15 @@ export const FILE_ACTIONS = Object.freeze({
   DELETE: 'delete',
 });
 
+// Keep in sync with electron/main.js FOLDER_ACTIONS.
+export const FOLDER_ACTIONS = Object.freeze({
+  NEW_FILE: 'newFile',
+  NEW_FOLDER: 'newFolder',
+  REVEAL: 'reveal',
+  RENAME: 'rename',
+  DELETE: 'delete',
+});
+
 // Keep in sync with electron/main.js EDITOR_ACTIONS.
 export const EDITOR_ACTIONS = Object.freeze({
   ADD_LINK: 'addLink',

@@ -1,16 +1,26 @@
 import React from 'react';
+import { PageIcon, FolderIcon, GraphIcon } from './Icons.jsx';
 
-export default function ThinSidebar({ onNewPage, onToggleGraph, graphMode, disabled }) {
+export default function ThinSidebar({ onNewFile, onNewFolder, onToggleGraph, graphMode, disabled }) {
   return (
     <div className="thin-sidebar">
       <button
         className="thin-sidebar-btn"
-        onClick={onNewPage}
+        onClick={onNewFile}
         disabled={disabled}
-        title="New page"
-        aria-label="New page"
+        title="New file"
+        aria-label="New file"
       >
-        <span aria-hidden="true">＋</span>
+        <PageIcon />
+      </button>
+      <button
+        className="thin-sidebar-btn"
+        onClick={onNewFolder}
+        disabled={disabled}
+        title="New folder"
+        aria-label="New folder"
+      >
+        <FolderIcon />
       </button>
       <button
         className={`thin-sidebar-btn ${graphMode ? 'active' : ''}`}
@@ -19,7 +29,7 @@ export default function ThinSidebar({ onNewPage, onToggleGraph, graphMode, disab
         title={graphMode ? 'Back to editor' : 'Graph view'}
         aria-label="Toggle graph view"
       >
-        <span aria-hidden="true">◌</span>
+        <GraphIcon />
       </button>
     </div>
   );
