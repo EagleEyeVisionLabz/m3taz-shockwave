@@ -1,0 +1,154 @@
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
+import { EditorState } from '@codemirror/state';
+import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
+import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { markdown } from '@codemirror/lang-markdown';
+import { syntaxHighlighting, defaultHighlightStyle, indentOnInput } from '@codemirror/language';
+import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
+import { indentationMarkers } from '@replit/codemirror-indentation-markers';
+import { oneDark } from '@codemirror/theme-one-dark';
+import { taskCheckboxes } from './taskCheckboxes.js';
+import { wikiLinks } from './wikiLinks.js';
+import { wikiLinkCompletions } from './wikiCompletions.js';
+
+/**
+ * Imperative editor wrapper.
+ *
+ * Props:
+ *   onLinkClick(name)              — wiki-link clicks
+ *   onChange()                     — fired when the user changes the doc (not for programmatic load)
+ *   getPageIndexRef                — ref whose .current is the latest pageIndex Map (autocomplete reads it live)
+ *   getVaultPathRef                — ref whose .current is the active workspace path
+ *   dark                           — boolean; when changed, the editor is recreated with/without oneDark
+ *
+ * Ref API (parent uses it to load content + read state):
+ *   setContent(text, viewState?)   — replaces doc; restores cursor/scroll if viewState provided, else resets to top
+ *   getText()                      — current doc text
+ *   getViewState()                 — { cursor, scrollTop } snapshot
+ *   clear()                        — empties the doc, resets cursor
+ */
+const Editor = forwardRef(function Editor(
+  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, dark },
+  ref,
+) {
+  const hostRef = useRef(null);
+  const viewRef = useRef(null);
+  const linkClickRef = useRef(onLinkClick);
+  const changeRef = useRef(onChange);
+  const isProgrammaticRef = useRef(false);
+
+  useEffect(() => { linkClickRef.current = onLinkClick; }, [onLinkClick]);
+  useEffect(() => { changeRef.current = onChange; }, [onChange]);
+
+  useImperativeHandle(ref, () => ({
+    getText: () => viewRef.current?.state.doc.toString() ?? '',
+    getViewState: () => {
+      const view = viewRef.current;
+      if (!view) return null;
+      return {
+        cursor: view.state.selection.main.head,
+        scrollTop: view.scrollDOM.scrollTop,
+      };
+    },
+    setContent: (text, viewState) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const current = view.state.doc.toString();
+      isProgrammaticRef.current = true;
+      if (current !== text) {
+        view.dispatch({ changes: { from: 0, to: current.length, insert: text } });
+      }
+      isProgrammaticRef.current = false;
+      const len = view.state.doc.length;
+      if (viewState) {
+        const cursor = Math.min(viewState.cursor ?? 0, len);
+        view.dispatch({ selection: { anchor: cursor } });
+        requestAnimationFrame(() => {
+          view.scrollDOM.scrollTop = viewState.scrollTop ?? 0;
+        });
+      } else {
+        view.dispatch({ selection: { anchor: 0 } });
+        requestAnimationFrame(() => { view.scrollDOM.scrollTop = 0; });
+      }
+    },
+    clear: () => {
+      const view = viewRef.current;
+      if (!view) return;
+      const current = view.state.doc.toString();
+      isProgrammaticRef.current = true;
+      view.dispatch({ changes: { from: 0, to: current.length, insert: '' } });
+      isProgrammaticRef.current = false;
+      view.dispatch({ selection: { anchor: 0 } });
+    },
+  }), []);
+
+  useEffect(() => {
+    if (!hostRef.current) return;
+    const completionSource = wikiLinkCompletions(
+      () => getPageIndexRef?.current ?? new Map(),
+      () => getVaultPathRef?.current ?? null,
+    );
+
+    const extensions = [
+      lineNumbers(),
+      highlightActiveLine(),
+      history(),
+      indentOnInput(),
+      indentationMarkers({
+        thickness: 1,
+        activeThickness: 1,
+        markerType: 'codeOnly',
+        colors: dark
+          ? { dark: '#3a3a3a', activeDark: '#5a5a5a' }
+          : { light: '#e0e0e0', activeLight: '#c0c0c0' },
+      }),
+      markdown(),
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      taskCheckboxes,
+      wikiLinks((name) => linkClickRef.current?.(name)),
+      autocompletion({
+        override: [completionSource],
+        activateOnTyping: true,
+        maxRenderedOptions: 30,
+      }),
+      keymap.of([
+        indentWithTab,
+        ...completionKeymap,
+        ...defaultKeymap,
+        ...historyKeymap,
+      ]),
+      EditorView.lineWrapping,
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged && !isProgrammaticRef.current) {
+          changeRef.current?.();
+        }
+      }),
+      EditorView.theme({
+        '&': { fontSize: '14px', backgroundColor: 'transparent' },
+        '&.cm-focused': { outline: 'none' },
+        '.cm-scroller': {
+          overflow: 'visible',
+          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          backgroundColor: 'transparent',
+        },
+        '.cm-content': { paddingLeft: '4px' },
+        '.cm-gutters': { backgroundColor: 'transparent', borderRight: 'none' },
+        '.cm-lineNumbers': { paddingLeft: '8px', paddingRight: '12px' },
+      }),
+    ];
+    if (dark) extensions.push(oneDark);
+
+    const state = EditorState.create({ doc: '', extensions });
+    const view = new EditorView({ state, parent: hostRef.current });
+    viewRef.current = view;
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dark]);
+
+  return <div ref={hostRef} className="editor-host" />;
+});
+
+export default Editor;
