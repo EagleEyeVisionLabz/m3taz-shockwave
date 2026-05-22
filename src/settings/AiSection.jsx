@@ -6,34 +6,17 @@ const PROVIDER_OPTIONS = [
   { value: AI_PROVIDERS.OPENAI, label: 'OpenAI' },
 ];
 
-export default function AiSection({ ai, onChange }) {
+function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange, modelPlaceholder }) {
   const [showKey, setShowKey] = useState(false);
-  const provider = ai?.provider ?? AI_PROVIDERS.ANTHROPIC;
-  const model = ai?.model ?? '';
-  const apiKey = ai?.apiKey ?? '';
-  const includeContextByDefault = !!ai?.includeContextByDefault;
-
-  const update = (patch) => onChange({
-    provider, model, apiKey, includeContextByDefault, ...patch,
-  });
-
   return (
-    <div className="settings-section">
-      <h2 className="settings-section-title">AI / Coding Agent</h2>
-      <p className="settings-section-desc">
-        Configure the model and how AI features behave in the editor. Your API key is stored
-        locally on this machine.
-      </p>
-
-      <h3 className="settings-subsection-title">LLM</h3>
-
+    <>
       <div className="settings-field">
-        <label className="settings-field-label" htmlFor="ai-provider">Provider</label>
+        <label className="settings-field-label" htmlFor={`${idPrefix}-provider`}>Provider</label>
         <select
-          id="ai-provider"
+          id={`${idPrefix}-provider`}
           className="settings-select"
           value={provider}
-          onChange={(e) => update({ provider: e.target.value })}
+          onChange={(e) => onChange({ provider: e.target.value })}
         >
           {PROVIDER_OPTIONS.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
@@ -42,28 +25,28 @@ export default function AiSection({ ai, onChange }) {
       </div>
 
       <div className="settings-field">
-        <label className="settings-field-label" htmlFor="ai-model">Model</label>
+        <label className="settings-field-label" htmlFor={`${idPrefix}-model`}>Model</label>
         <input
-          id="ai-model"
+          id={`${idPrefix}-model`}
           className="settings-input"
           type="text"
           value={model}
-          placeholder={provider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
-          onChange={(e) => update({ model: e.target.value })}
+          placeholder={modelPlaceholder}
+          onChange={(e) => onChange({ model: e.target.value })}
           spellCheck={false}
           autoComplete="off"
         />
       </div>
 
       <div className="settings-field">
-        <label className="settings-field-label" htmlFor="ai-key">API key</label>
+        <label className="settings-field-label" htmlFor={`${idPrefix}-key`}>API key</label>
         <div className="settings-input-row">
           <input
-            id="ai-key"
+            id={`${idPrefix}-key`}
             className="settings-input"
             type={showKey ? 'text' : 'password'}
             value={apiKey}
-            onChange={(e) => update({ apiKey: e.target.value })}
+            onChange={(e) => onChange({ apiKey: e.target.value })}
             spellCheck={false}
             autoComplete="off"
             autoCorrect="off"
@@ -77,15 +60,51 @@ export default function AiSection({ ai, onChange }) {
           </button>
         </div>
       </div>
+    </>
+  );
+}
 
-      <h3 className="settings-subsection-title">Inline AI Editing</h3>
+export default function AiSection({ ai, onChange, codingAgent, onCodingAgentChange }) {
+  const aiProvider = ai?.provider ?? AI_PROVIDERS.ANTHROPIC;
+  const aiModel = ai?.model ?? '';
+  const aiApiKey = ai?.apiKey ?? '';
+  const includeContextByDefault = !!ai?.includeContextByDefault;
+  const updateAi = (patch) => onChange({
+    provider: aiProvider, model: aiModel, apiKey: aiApiKey, includeContextByDefault, ...patch,
+  });
+
+  const caProvider = codingAgent?.provider ?? AI_PROVIDERS.ANTHROPIC;
+  const caModel = codingAgent?.model ?? '';
+  const caApiKey = codingAgent?.apiKey ?? '';
+  const updateCa = (patch) => onCodingAgentChange?.({
+    provider: caProvider, model: caModel, apiKey: caApiKey, ...patch,
+  });
+
+  return (
+    <div className="settings-section">
+      <h2 className="settings-section-title">AI / Coding Agent</h2>
+      <p className="settings-section-desc">
+        Configure the models for inline editing and the coding agent. API keys are stored
+        locally on this machine.
+      </p>
+
+      <h3 className="settings-subsection-title">Inline AI</h3>
+      <p className="settings-field-hint">Used by right-click "Insert AI Response" and "Rewrite with AI" in the editor.</p>
+      <ProviderModelKey
+        idPrefix="ai"
+        provider={aiProvider}
+        model={aiModel}
+        apiKey={aiApiKey}
+        onChange={updateAi}
+        modelPlaceholder={aiProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
+      />
 
       <div className="settings-field">
         <label className="settings-checkbox-row">
           <input
             type="checkbox"
             checked={includeContextByDefault}
-            onChange={(e) => update({ includeContextByDefault: e.target.checked })}
+            onChange={(e) => updateAi({ includeContextByDefault: e.target.checked })}
           />
           <span>Include the rest of the document as context by default</span>
         </label>
@@ -94,6 +113,19 @@ export default function AiSection({ ai, onChange }) {
           toggle this per request in the prompt window.
         </p>
       </div>
+
+      <h3 className="settings-subsection-title">Coding Agent</h3>
+      <p className="settings-field-hint">
+        Powers the chat sidebar. The agent can read, edit, and run commands inside your active workspace.
+      </p>
+      <ProviderModelKey
+        idPrefix="coding-agent"
+        provider={caProvider}
+        model={caModel}
+        apiKey={caApiKey}
+        onChange={updateCa}
+        modelPlaceholder={caProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
+      />
     </div>
   );
 }

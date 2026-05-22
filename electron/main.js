@@ -10,6 +10,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { parseLinks } from './linkParser.js';
 import { getAction } from './aiActions.js';
 import { createRenameCorrelator } from './renameCorrelator.js';
+import { agentSend, agentAbort, agentReset } from './codingAgent.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,6 +30,13 @@ const DEFAULT_SETTINGS = {
     apiKey: '',
     includeContextByDefault: false,
   },
+  codingAgent: {
+    provider: 'anthropic',
+    model: 'claude-sonnet-4-5',
+    apiKey: '',
+  },
+  chatSidebarOpen: false,
+  chatSidebarWidth: 360,
 };
 
 function settingsPath() {
@@ -44,6 +52,7 @@ async function readSettings() {
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...(parsed.appearance ?? {}) },
       ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai ?? {}) },
+      codingAgent: { ...DEFAULT_SETTINGS.codingAgent, ...(parsed.codingAgent ?? {}) },
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -678,6 +687,44 @@ ipcMain.handle('ai:cancel', async (_evt, { requestId }) => {
   inflightAi.delete(requestId);
 });
 
+// ---- Coding agent (pi) ----
+//
+// One pi AgentSession at a time. The renderer sends `agent:send` with the prompt
+// text; main reads the current workspace and coding-agent settings, lazily creates
+// or reuses a session, then forwards every pi event back via `agent:event`. The
+// renderer relies on the event stream's `agent_start` / `agent_end` boundaries to
+// gate its send button.
+
+ipcMain.handle('agent:send', async (evt, { text }) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  if (!win) return;
+  const emit = (channel, payload) => {
+    if (!win.isDestroyed()) win.webContents.send(channel, payload);
+  };
+
+  try {
+    const settings = await readSettings();
+    const ws = (settings.workspaces || []).find((w) => w.id === settings.activeWorkspaceId);
+    const workspacePath = ws?.path ?? null;
+    const { provider, model, apiKey } = settings.codingAgent ?? {};
+
+    await agentSend(
+      { text, workspacePath, provider, model, apiKey },
+      (event) => emit('agent:event', event),
+    );
+  } catch (err) {
+    emit('agent:error', { message: err?.message ?? String(err) });
+  }
+});
+
+ipcMain.handle('agent:abort', async () => {
+  try { await agentAbort(); } catch {}
+});
+
+ipcMain.handle('agent:reset', async () => {
+  try { await agentReset(); } catch {}
+});
+
 function timestampForFilename(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');
   return (
@@ -934,7 +981,7 @@ ipcMain.handle('fs:watchStart', async (evt, dirPath) => {
 
 ipcMain.handle('fs:watchStop', stopWatcher);
 
-app.on('before-quit', () => { stopWatcher(); });
+app.on('before-quit', () => { stopWatcher(); agentReset().catch(() => {}); });
 
 ipcMain.handle('theme:getInitial', () => ({
   dark: nativeTheme.shouldUseDarkColors,

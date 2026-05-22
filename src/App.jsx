@@ -14,6 +14,7 @@ import ErrorMessage from './ErrorMessage.jsx';
 import ErrorDialog from './ErrorDialog.jsx';
 import InlineAiModal from './InlineAiModal.jsx';
 import EditorStatusBar from './EditorStatusBar.jsx';
+import ChatSidebar from './ChatSidebar.jsx';
 import { prettyName } from './linkIndex.js';
 import { rewriteReferences } from './renameOps.js';
 import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, AI_ACTIONS, VIEW_MODES, SAVE_STATES } from './constants.js';
@@ -82,11 +83,22 @@ export default function App() {
     apiKey: '',
     includeContextByDefault: false,
   });
+  const [codingAgentSettings, setCodingAgentSettings] = useState({
+    provider: AI_PROVIDERS.ANTHROPIC,
+    model: 'claude-sonnet-4-5',
+    apiKey: '',
+  });
+  const codingAgentSettingsRef = useRef(codingAgentSettings);
+  useEffect(() => { codingAgentSettingsRef.current = codingAgentSettings; }, [codingAgentSettings]);
   const [aiError, setAiError] = useState(null);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const sidebarWidthRef = useRef(260);
+  const [chatSidebarOpen, setChatSidebarOpen] = useState(false);
+  const chatSidebarOpenRef = useRef(false);
+  const [chatSidebarWidth, setChatSidebarWidth] = useState(360);
+  const chatSidebarWidthRef = useRef(360);
   const [viewMode, setViewMode] = useState(VIEW_MODES.LIVE);
   const [editorStats, setEditorStats] = useState({ words: 0, chars: 0 });
   const [saveState, setSaveState] = useState(SAVE_STATES.SAVED);
@@ -303,8 +315,11 @@ export default function App() {
       activeWorkspaceId: next.activeWorkspaceId,
       appearance: { themeMode: next.themeMode },
       ai: next.ai,
+      codingAgent: next.codingAgent ?? codingAgentSettingsRef.current,
       sidebarWidth: next.sidebarWidth ?? sidebarWidthRef.current,
       viewMode: next.viewMode ?? viewModeRef.current,
+      chatSidebarOpen: next.chatSidebarOpen ?? chatSidebarOpenRef.current,
+      chatSidebarWidth: next.chatSidebarWidth ?? chatSidebarWidthRef.current,
     });
   }, []);
 
@@ -393,6 +408,12 @@ export default function App() {
     setAiSettings(next);
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: next });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  const onCodingAgentChange = useCallback(async (next) => {
+    setCodingAgentSettings(next);
+    codingAgentSettingsRef.current = next;
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings, codingAgent: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
 
   // ---- title commit (rename existing or promote draft) ----
   const onTitleCommit = useCallback(async (newName) => {
@@ -713,9 +734,21 @@ export default function App() {
       setThemeMode(settings.appearance?.themeMode || THEME_MODES.SYSTEM);
       setWorkspaces(settings.workspaces || []);
       if (settings.ai) setAiSettings(settings.ai);
+      if (settings.codingAgent) {
+        setCodingAgentSettings(settings.codingAgent);
+        codingAgentSettingsRef.current = settings.codingAgent;
+      }
       if (typeof settings.sidebarWidth === 'number') {
         setSidebarWidth(settings.sidebarWidth);
         sidebarWidthRef.current = settings.sidebarWidth;
+      }
+      if (typeof settings.chatSidebarOpen === 'boolean') {
+        setChatSidebarOpen(settings.chatSidebarOpen);
+        chatSidebarOpenRef.current = settings.chatSidebarOpen;
+      }
+      if (typeof settings.chatSidebarWidth === 'number') {
+        setChatSidebarWidth(settings.chatSidebarWidth);
+        chatSidebarWidthRef.current = settings.chatSidebarWidth;
       }
       if (settings.viewMode === VIEW_MODES.RAW || settings.viewMode === VIEW_MODES.LIVE) {
         setViewMode(settings.viewMode);
@@ -834,8 +867,50 @@ export default function App() {
     document.addEventListener('mouseup', onUp);
   }, [persistSidebarWidth]);
 
+  const persistChatSidebar = useCallback(async () => {
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
+
+  const toggleChatSidebar = useCallback(() => {
+    setChatSidebarOpen((prev) => {
+      const next = !prev;
+      chatSidebarOpenRef.current = next;
+      persistChatSidebar();
+      return next;
+    });
+  }, [persistChatSidebar]);
+
+  const onChatSidebarResizeStart = useCallback((e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startWidth = chatSidebarWidthRef.current;
+    const onMove = (ev) => {
+      // Chat sidebar is on the right edge, so dragging LEFT (negative delta) widens it.
+      const next = Math.max(260, Math.min(720, startWidth - (ev.clientX - startX)));
+      chatSidebarWidthRef.current = next;
+      setChatSidebarWidth(next);
+    };
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      persistChatSidebar();
+    };
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [persistChatSidebar]);
+
   return (
-    <div className="app" style={{ '--sidebar-width': `${sidebarWidth}px` }}>
+    <div
+      className="app"
+      style={{
+        '--sidebar-width': `${sidebarWidth}px`,
+        '--chat-col-width': chatSidebarOpen ? `${chatSidebarWidth}px` : '28px',
+      }}
+    >
       <ThinSidebar
         onNewFile={onNewFile}
         onNewFolder={onNewFolder}
@@ -904,64 +979,66 @@ export default function App() {
           />
         ) : workspacePath ? (
           <>
-            <div className={activeTab ? '' : 'editor-zone-hidden'}>
-              <EditorNav
-                onBack={onBack}
-                onForward={onForward}
-                canGoBack={canGoBack}
-                canGoForward={canGoForward}
-              />
-              <EditorTitle
-                value={titleDraft}
-                onChange={setTitleDraft}
-                onCommit={onTitleCommit}
-                conflict={!!titleConflict}
-              />
-              {titleConflict && (
-                <ErrorMessage className="error-message-title">
-                  There's already a file with the same name
-                </ErrorMessage>
-              )}
-            </div>
-            <div className={activeTab ? '' : 'editor-zone-hidden'}>
-              <Editor
-                ref={editorRef}
-                onLinkClick={fileOps.onLinkClick}
-                onChange={onEditorChange}
-                getPageIndexRef={linkIndex.pageIndexRef}
-                getVaultPathRef={workspacePathRef}
-                getActiveFilePathRef={activeFilePathRef}
-                onImageError={showError}
-                onRequestUrl={requestUrl}
-                onAskAgent={onInlineAiTrigger}
-                onStats={setEditorStats}
-                dark={isDark}
-                viewMode={viewMode}
-              />
-            </div>
-            {activeTab ? (
-              <>
+            <div className="editor-scroll">
+              <div className={activeTab ? '' : 'editor-zone-hidden'}>
+                <EditorNav
+                  onBack={onBack}
+                  onForward={onForward}
+                  canGoBack={canGoBack}
+                  canGoForward={canGoForward}
+                />
+                <EditorTitle
+                  value={titleDraft}
+                  onChange={setTitleDraft}
+                  onCommit={onTitleCommit}
+                  conflict={!!titleConflict}
+                />
+                {titleConflict && (
+                  <ErrorMessage className="error-message-title">
+                    There's already a file with the same name
+                  </ErrorMessage>
+                )}
+              </div>
+              <div className={activeTab ? '' : 'editor-zone-hidden'}>
+                <Editor
+                  ref={editorRef}
+                  onLinkClick={fileOps.onLinkClick}
+                  onChange={onEditorChange}
+                  getPageIndexRef={linkIndex.pageIndexRef}
+                  getVaultPathRef={workspacePathRef}
+                  getActiveFilePathRef={activeFilePathRef}
+                  onImageError={showError}
+                  onRequestUrl={requestUrl}
+                  onAskAgent={onInlineAiTrigger}
+                  onStats={setEditorStats}
+                  dark={isDark}
+                  viewMode={viewMode}
+                />
+              </div>
+              {activeTab ? (
                 <BacklinksPanel
                   groups={activeBacklinks}
                   vaultPath={workspacePath}
                   onOpen={openInActiveTab}
                 />
-                <EditorStatusBar
-                  backlinkCount={activeBacklinks.length}
-                  words={editorStats.words}
-                  chars={editorStats.chars}
-                  viewMode={viewMode}
-                  onToggleViewMode={onToggleViewMode}
-                  saveState={saveState}
-                />
-              </>
-            ) : (
-              <div className="no-tab-cta">
-                <button className="create-file-btn" onClick={onNewFile}>
-                  + Create new file
-                </button>
-                <div className="no-tab-hint">or pick a file from the sidebar</div>
-              </div>
+              ) : (
+                <div className="no-tab-cta">
+                  <button className="create-file-btn" onClick={onNewFile}>
+                    + Create new file
+                  </button>
+                  <div className="no-tab-hint">or pick a file from the sidebar</div>
+                </div>
+              )}
+            </div>
+            {activeTab && (
+              <EditorStatusBar
+                backlinkCount={activeBacklinks.length}
+                words={editorStats.words}
+                chars={editorStats.chars}
+                viewMode={viewMode}
+                onToggleViewMode={onToggleViewMode}
+                saveState={saveState}
+              />
             )}
           </>
         ) : (
@@ -970,6 +1047,26 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {chatSidebarOpen ? (
+        <aside className="chat-sidebar-wrap" key={workspacePath ?? 'no-workspace'}>
+          <div
+            className="chat-sidebar-resize-handle"
+            onMouseDown={onChatSidebarResizeStart}
+          />
+          <ChatSidebar onClose={toggleChatSidebar} workspacePath={workspacePath} />
+        </aside>
+      ) : (
+        <button
+          type="button"
+          className="chat-sidebar-strip"
+          onClick={toggleChatSidebar}
+          title="Open coding agent"
+          aria-label="Open coding agent"
+        >
+          <span className="chat-sidebar-strip-label">Chat</span>
+        </button>
+      )}
 
       {urlPromptResolve && (
         <UrlPromptModal onSubmit={handleUrlSubmit} onCancel={handleUrlCancel} />
@@ -1003,6 +1100,8 @@ export default function App() {
           onThemeModeChange={onThemeModeChange}
           ai={aiSettings}
           onAiChange={onAiChange}
+          codingAgent={codingAgentSettings}
+          onCodingAgentChange={onCodingAgentChange}
         />
       )}
     </div>

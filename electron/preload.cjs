@@ -64,4 +64,19 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('ai:error', listener);
     },
   },
+  agent: {
+    send: (text) => ipcRenderer.invoke('agent:send', { text }),
+    abort: () => ipcRenderer.invoke('agent:abort'),
+    reset: () => ipcRenderer.invoke('agent:reset'),
+    onEvent: (cb) => {
+      const listener = (_evt, payload) => cb(payload);
+      ipcRenderer.on('agent:event', listener);
+      return () => ipcRenderer.removeListener('agent:event', listener);
+    },
+    onError: (cb) => {
+      const listener = (_evt, payload) => cb(payload);
+      ipcRenderer.on('agent:error', listener);
+      return () => ipcRenderer.removeListener('agent:error', listener);
+    },
+  },
 });

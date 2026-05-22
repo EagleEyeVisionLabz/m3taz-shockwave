@@ -22,6 +22,8 @@ export default function SettingsModal({
   onThemeModeChange,
   ai,
   onAiChange,
+  codingAgent,
+  onCodingAgentChange,
 }) {
   const [active, setActive] = useState(initialSection || SECTIONS[0].id);
 
@@ -66,7 +68,12 @@ export default function SettingsModal({
             />
           )}
           {active === SETTINGS_SECTIONS.AI && (
-            <AiSection ai={ai} onChange={onAiChange} />
+            <AiSection
+              ai={ai}
+              onChange={onAiChange}
+              codingAgent={codingAgent}
+              onCodingAgentChange={onCodingAgentChange}
+            />
           )}
         </div>
       </div>
