@@ -1080,7 +1080,7 @@ export default function App() {
           title="Open coding agent"
           aria-label="Open coding agent"
         >
-          <span className="chat-sidebar-strip-label">Chat</span>
+          <span className="chat-sidebar-strip-icon" aria-hidden="true">🤖</span>
         </button>
       )}
 

@@ -32,9 +32,29 @@ function formatToolResult(result) {
   return String(result);
 }
 
-function ToolBubble({ entry }) {
+// Xs under 60s, Ym Xs over.
+function formatElapsed(ms) {
+  const totalSec = Math.floor(ms / 1000);
+  if (totalSec < 60) return `${totalSec}s`;
+  const m = Math.floor(totalSec / 60);
+  const s = totalSec % 60;
+  return `${m}m ${s}s`;
+}
+
+function formatTokens(n) {
+  if (!n) return '0';
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return k < 10 ? `${k.toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(k)}k`;
+}
+
+function ToolEntry({ entry }) {
   const [open, setOpen] = useState(false);
   const status = entry.done ? (entry.isError ? '✗' : '✓') : '…';
+  let argsBlock = '';
+  if (entry.args) {
+    try { argsBlock = JSON.stringify(entry.args, null, 2); } catch { argsBlock = String(entry.args); }
+  }
   return (
     <div className={`chat-tool ${entry.isError ? 'chat-tool-error' : ''}`}>
       <button type="button" className="chat-tool-summary" onClick={() => setOpen((v) => !v)}>
@@ -45,12 +65,8 @@ function ToolBubble({ entry }) {
       </button>
       {open && (
         <div className="chat-tool-detail">
-          {entry.args && (
-            <pre className="chat-tool-block">{(() => {
-              try { return JSON.stringify(entry.args, null, 2); } catch { return String(entry.args); }
-            })()}</pre>
-          )}
-          {entry.output ? <pre className="chat-tool-block">{entry.output}</pre> : null}
+          {argsBlock ? <div className="chat-tool-text">{argsBlock}</div> : null}
+          {entry.output ? <div className="chat-tool-text">{entry.output}</div> : null}
         </div>
       )}
     </div>
@@ -62,10 +78,14 @@ export default function ChatSidebar({ onClose, workspacePath }) {
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [tokens, setTokens] = useState(0);
   const currentAssistantIdRef = useRef(null);
   const idCounterRef = useRef(0);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
+  const runStartRef = useRef(0);
+  const tickerRef = useRef(null);
 
   const nextId = () => `m${++idCounterRef.current}`;
 
@@ -77,8 +97,13 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     const offError = window.api.agent.onError(({ message }) => {
       setRunning(false);
       setError(message);
+      if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
     });
-    return () => { offEvent?.(); offError?.(); };
+    return () => {
+      offEvent?.();
+      offError?.();
+      if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -94,11 +119,28 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     if (evt.type === 'agent_start') {
       setRunning(true);
       setError(null);
+      setTokens(0);
+      setElapsedMs(0);
+      runStartRef.current = Date.now();
+      if (tickerRef.current) clearInterval(tickerRef.current);
+      tickerRef.current = setInterval(() => {
+        setElapsedMs(Date.now() - runStartRef.current);
+      }, 200);
       return;
     }
     if (evt.type === 'agent_end') {
       setRunning(false);
       currentAssistantIdRef.current = null;
+      if (runStartRef.current) setElapsedMs(Date.now() - runStartRef.current);
+      if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
+      return;
+    }
+    if (evt.type === 'turn_end') {
+      // Pi's normalized Usage: { input, output, cacheRead, cacheWrite, totalTokens, cost }.
+      // Sum totalTokens across turns — each turn re-pays for the context, so this
+      // matches actual billed usage for the run.
+      const total = evt.message?.usage?.totalTokens;
+      if (typeof total === 'number') setTokens((prev) => prev + total);
       return;
     }
     if (evt.type === 'message_update') {
@@ -113,7 +155,6 @@ export default function ChatSidebar({ onClose, workspacePath }) {
       if (inner.type === 'text_delta') {
         const id = currentAssistantIdRef.current;
         if (!id) {
-          // Stream started without a text_start (shouldn't normally happen) — create lazily.
           const newId = nextId();
           currentAssistantIdRef.current = newId;
           setMessages((prev) => [...prev, { id: newId, kind: 'assistant', text: inner.delta ?? '' }]);
@@ -190,25 +231,18 @@ export default function ChatSidebar({ onClose, workspacePath }) {
 
   return (
     <div className="chat-sidebar" role="region" aria-label="Coding agent chat">
-      <header className="chat-sidebar-header">
-        <span className="chat-sidebar-title">Coding Agent</span>
+      <div className="chat-sidebar-header">
+        <span className="chat-sidebar-robot" aria-hidden="true">🤖</span>
         <button
           type="button"
           className="chat-sidebar-close"
           onClick={onClose}
-          title="Close chat"
-          aria-label="Close chat"
+          title="Close coding agent"
+          aria-label="Close coding agent"
         >×</button>
-      </header>
+      </div>
 
       <div ref={scrollRef} className="chat-messages">
-        {messages.length === 0 && !running && (
-          <div className="chat-empty">
-            {workspacePath
-              ? 'Ask the agent to read, edit, or run something in your workspace.'
-              : 'Open a workspace to start chatting with the agent.'}
-          </div>
-        )}
         {messages.map((m) => {
           if (m.kind === 'user') {
             return <div key={m.id} className="chat-message chat-user"><div className="chat-bubble">{m.text}</div></div>;
@@ -217,11 +251,34 @@ export default function ChatSidebar({ onClose, workspacePath }) {
             return <div key={m.id} className="chat-message chat-assistant"><div className="chat-bubble">{m.text}</div></div>;
           }
           if (m.kind === 'tool') {
-            return <div key={m.id} className="chat-message chat-tool-row"><ToolBubble entry={m} /></div>;
+            return <div key={m.id} className="chat-message chat-tool-row"><ToolEntry entry={m} /></div>;
           }
           return null;
         })}
-        {running && <div className="chat-thinking">Working…</div>}
+        {running && (
+          <div className="chat-thinking">
+            <svg
+              className="chat-spinner"
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              width={12}
+              height={12}
+              aria-hidden="true"
+            >
+              <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+            </svg>
+            <span className="thinking-shimmer">Working</span>
+            <span className="chat-thinking-stats">
+              {formatElapsed(elapsedMs)}
+              {tokens > 0 && ` · ${formatTokens(tokens)} tokens`}
+            </span>
+          </div>
+        )}
         {error && <div className="chat-error">{error}</div>}
       </div>
 

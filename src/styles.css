@@ -1293,16 +1293,14 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px 6px 12px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-thin);
+  padding: 6px 10px;
   flex-shrink: 0;
 }
 
-.chat-sidebar-title {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--fg-primary);
+.chat-sidebar-robot {
+  font-size: 16px;
+  line-height: 1;
+  user-select: none;
 }
 
 .chat-sidebar-close {
@@ -1315,6 +1313,7 @@ html, body, #root {
   border-radius: 4px;
   cursor: pointer;
   line-height: 1;
+  padding: 0;
 }
 
 .chat-sidebar-close:hover {
@@ -1341,12 +1340,15 @@ html, body, #root {
   color: var(--fg-primary);
 }
 
-.chat-sidebar-strip-label {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font-size: 11px;
-  letter-spacing: 0.6px;
-  text-transform: uppercase;
+.chat-sidebar-strip-icon {
+  font-size: 16px;
+  line-height: 1;
+  opacity: 0.7;
+  user-select: none;
+}
+
+.chat-sidebar-strip:hover .chat-sidebar-strip-icon {
+  opacity: 1;
 }
 
 .chat-messages {
@@ -1391,20 +1393,20 @@ html, body, #root {
 }
 
 .chat-assistant .chat-bubble {
-  background: var(--bg-popover);
+  background: transparent;
   color: var(--fg-primary);
-  border: 1px solid var(--border);
+  padding-left: 0;
+  padding-right: 0;
+  max-width: 100%;
 }
 
 .chat-tool {
   font-size: 12px;
-  background: var(--bg-popover);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  overflow: hidden;
+  background: transparent;
+  border: none;
 }
 
-.chat-tool-error { border-color: var(--border-error); }
+.chat-tool-error .chat-tool-status { color: var(--fg-error); }
 
 .chat-tool-summary {
   width: 100%;
@@ -1413,14 +1415,14 @@ html, body, #root {
   gap: 6px;
   background: transparent;
   border: none;
-  padding: 4px 8px;
+  padding: 2px 0;
   cursor: pointer;
   color: var(--fg-secondary);
   text-align: left;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
-.chat-tool-summary:hover { background: var(--bg-hover); }
+.chat-tool-summary:hover .chat-tool-name { color: var(--fg-primary); }
 
 .chat-tool-caret { width: 12px; flex-shrink: 0; }
 .chat-tool-status { width: 12px; text-align: center; flex-shrink: 0; }
@@ -1435,32 +1437,80 @@ html, body, #root {
 }
 
 .chat-tool-detail {
-  padding: 6px 8px;
-  border-top: 1px solid var(--border);
+  padding: 4px 0 4px 18px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
 }
 
-.chat-tool-block {
+.chat-tool-text {
   margin: 0;
-  background: var(--bg-app);
-  padding: 6px 8px;
-  border-radius: 4px;
   font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: pre-wrap;
   word-break: break-word;
+  color: var(--fg-secondary);
   max-height: 240px;
   overflow: auto;
-  color: var(--fg-primary);
 }
 
 .chat-thinking {
-  color: var(--fg-muted);
-  font-style: italic;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   font-size: 12px;
   padding: 4px 0;
+}
+
+.chat-thinking-stats {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* SpinnerIcon ported verbatim from thepopebot (lib/chat/components/icons.jsx).
+   Tailwind's animate-spin is just 1s linear rotation; reimplemented here. */
+.chat-spinner {
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  align-self: center;
+  animation: chat-spinner-rotate 1s linear infinite;
+}
+
+@keyframes chat-spinner-rotate {
+  to { transform: rotate(360deg); }
+}
+
+/* Working indicator shimmer — sweeps a blue band across muted text.
+   Copied verbatim from ../thepopebot/web/app/globals.css (--muted-foreground
+   mapped to this app's --fg-muted). */
+@keyframes thinking-shimmer {
+  0% { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+
+.thinking-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--fg-muted) 0%,
+    var(--fg-muted) 25%,
+    hsl(215, 85%, 55%) 42%,
+    hsl(210, 100%, 82%) 50%,
+    hsl(215, 85%, 55%) 58%,
+    var(--fg-muted) 75%,
+    var(--fg-muted) 100%
+  );
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation:
+    thinking-shimmer 2.5s ease-in-out infinite,
+    thinking-pulse 3s ease-in-out infinite;
 }
 
 .chat-error {
