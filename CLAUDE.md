@@ -4,13 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `npm run dev` — run vite + electron concurrently (vite on :5173, electron waits via `wait-on`)
-- `npm run build` — vite build into `dist/`
-- `npm start` — run electron against an existing build
-- `npm run dist` — `vite build` then `electron-builder` (produces dmg/nsis/AppImage per `build` block in `package.json`)
-- `npm test` — run the test suite (node:test, no install needed)
+- `npm run dev` — start electron-vite (`electron-vite dev --watch --remoteDebuggingPort=9222`). Builds main + preload, serves the renderer on :5173, launches Electron, and auto-reloads on any `electron/**` or `src/**` change. CDP for the renderer is exposed on :9222.
+- `npm run build` — production build to `out/` (main, preload, renderer).
+- `npm start` — `electron-vite preview` against the production build.
+- `npm run dist` — build then `electron-builder` (produces dmg/nsis/AppImage per `build` block in `package.json`).
+- `npm test` — run the test suite (node:test, no install needed).
 
 No linter configured.
+
+For day-to-day workflow (when to restart, how to read main vs renderer logs, how to attach to the renderer via CDP for headless debugging, IPC discipline), use the **electron-dev** skill at `.claude/skills/electron-dev/SKILL.md`.
 
 ## Architecture
 
@@ -20,7 +22,7 @@ Electron app with a Vite + React 19 renderer. The renderer is a markdown-workspa
 
 - **Main** (`electron/main.js`): owns the filesystem, dialogs, context menus, settings persistence, `nativeTheme`, the file watcher + rename correlator, and AI streaming (`@ai-sdk/anthropic`, `@ai-sdk/openai` via `electron/aiActions.js`). All IPC handlers are registered here. Settings persist to `app.getPath('userData')/settings.json` via an atomic tmp+rename.
 - **Preload** (`electron/preload.cjs`): exposes a single `window.api` surface. The renderer never touches Node — every fs/dialog/AI call goes through `window.api.*`.
-- **Renderer** (`src/`): React app rooted at `src/main.jsx` → `App.jsx`. Vite root is `src/` (see `vite.config.js`); build output goes to `dist/`.
+- **Renderer** (`src/`): React app rooted at `src/main.jsx` → `App.jsx`. Vite root is `src/` (configured in `electron.vite.config.js`'s `renderer` section); build output goes to `out/renderer/`. Built main/preload land at `out/main/index.js` and `out/preload/index.cjs`.
 
 ### Renderer state model
 
@@ -101,6 +103,8 @@ Events shipped to the renderer (via `fs:changed`):
 - `{type:'tree'}` — folder change or non-.md change (tree refresh only)
 
 The watcher only sees inside the active workspace, and the `ignored` predicate skips any path with a dotfile segment (`.git`, `.obsidian`, etc.) — mirrors `buildTree`.
+
+**Renderer-side discipline (the bug this prevents):** the `fs:changed` listener in `App.jsx` subscribes once per `workspacePath` and accesses every dependency (`linkIndex`, `refreshTree`, `renameTabsPath`, `showError`) via refs. Do NOT add `linkIndex` (or any per-render object) to the listener's `useEffect` deps. The handlers call `linkIndex.bump()` synchronously, which triggers a re-render; if the effect re-ran on that, its cleanup would clear the 80ms `refreshTimer` set inside the listener, and external `.md` adds would silently never refresh the sidebar. In-app file operations call `fileOps.treeAndIndexChanged()` directly AND get echoed by the watcher, so they paper over watcher bugs; external changes (terminal, pi coding agent, other apps) rely solely on this path. If external changes stop updating the sidebar, the listener-churn pattern is the first place to look.
 
 ### Cross-process constants to keep in sync
 

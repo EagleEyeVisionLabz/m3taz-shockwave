@@ -648,6 +648,22 @@ export default function App() {
   // later. The renderer has already called linkIndex.updateFile with a Date.now()
   // mtime, so the echo's stat.mtimeMs will be <= the stored mtime. We compare and
   // skip stale events so the echo can't clobber fresh in-memory state.
+  // Stable refs so the watcher subscription below depends ONLY on workspacePath
+  // and never tears down on re-render. Critical: `linkIndex.bump()` (called by
+  // `applyParsedLinks` / `removeFile` / `renameFile`) triggers a re-render; if
+  // this effect re-ran on that, the 80ms `refreshTimer` set inside the listener
+  // would be cleared by cleanup before it could fire, and the tree would never
+  // refresh for external .md adds. See the deep dive on the file-watcher
+  // gotcha in CLAUDE.md → Development workflow.
+  const linkIndexRefForWatcher = useRef(linkIndex);
+  useEffect(() => { linkIndexRefForWatcher.current = linkIndex; }, [linkIndex]);
+  const refreshTreeRef = useRef(refreshTree);
+  useEffect(() => { refreshTreeRef.current = refreshTree; }, [refreshTree]);
+  const renameTabsPathRef = useRef(renameTabsPath);
+  useEffect(() => { renameTabsPathRef.current = renameTabsPath; }, [renameTabsPath]);
+  const showErrorRef = useRef(showError);
+  useEffect(() => { showErrorRef.current = showError; }, [showError]);
+
   useEffect(() => {
     if (!workspacePath) return undefined;
     let refreshTimer = null;
@@ -655,29 +671,30 @@ export default function App() {
       if (refreshTimer) return;
       refreshTimer = setTimeout(() => {
         refreshTimer = null;
-        refreshTree();
+        refreshTreeRef.current();
       }, 80);
     };
     const unsub = window.api.onFsChanged((evt) => {
+      const li = linkIndexRefForWatcher.current;
       if (evt.type === 'tree') {
         scheduleRefresh();
         return;
       }
       if (evt.type === 'unlink') {
-        linkIndex.removeFile(evt.path);
+        li.removeFile(evt.path);
         scheduleRefresh();
         return;
       }
       if (evt.type === 'rename') {
         // 1) Re-key the index so subsequent events for newPath are coherent.
-        linkIndex.renameFile(evt.oldPath, evt.newPath);
+        li.renameFile(evt.oldPath, evt.newPath);
         // 2) Refresh outgoing links if content changed during the move (rare).
-        const stored = linkIndex.linkIndexRef.current.getMtime(evt.newPath);
+        const stored = li.linkIndexRef.current.getMtime(evt.newPath);
         if (stored == null || evt.mtime > stored) {
-          linkIndex.applyParsedLinks(evt.newPath, evt.outgoingLinks, evt.mtime);
+          li.applyParsedLinks(evt.newPath, evt.outgoingLinks, evt.mtime);
         }
         // 3) Update any open tabs pointing at the old path.
-        renameTabsPath(evt.oldPath, evt.newPath);
+        renameTabsPathRef.current(evt.oldPath, evt.newPath);
         // 4) Rewrite `[[OldName]]` references in other files. Idempotent — if
         //    the rename was in-app, these were already rewritten and the regex
         //    matches nothing on the watcher echo.
@@ -688,7 +705,7 @@ export default function App() {
             try {
               await rewriteReferences({
                 api: window.api,
-                linkIndex: linkIndex.linkIndexRef.current,
+                linkIndex: li.linkIndexRef.current,
                 oldBaseName,
                 newBaseName,
                 selfPath: evt.newPath,
@@ -696,10 +713,10 @@ export default function App() {
               // Re-read self in case self-refs were rewritten on disk.
               try {
                 const content = await window.api.readFile(evt.newPath);
-                linkIndex.updateFile(evt.newPath, content);
+                li.updateFile(evt.newPath, content);
               } catch { /* file may have moved again */ }
             } catch (err) {
-              showError(err.message ?? String(err));
+              showErrorRef.current(err.message ?? String(err));
             }
           })();
         }
@@ -707,9 +724,9 @@ export default function App() {
         return;
       }
       // 'add' | 'change'
-      const stored = linkIndex.linkIndexRef.current.getMtime(evt.path);
+      const stored = li.linkIndexRef.current.getMtime(evt.path);
       if (stored == null || evt.mtime > stored) {
-        linkIndex.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
+        li.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
       }
       if (evt.type === 'add') scheduleRefresh();
     });
@@ -717,8 +734,7 @@ export default function App() {
       unsub();
       if (refreshTimer) clearTimeout(refreshTimer);
     };
-    // linkIndex methods are stable useCallbacks; linkIndexRef is a stable useRef.
-  }, [workspacePath, refreshTree, linkIndex, renameTabsPath, showError]);
+  }, [workspacePath]);
 
   // ---- boot: load settings + subscribe to system theme ----
   useEffect(() => {

@@ -3,26 +3,23 @@
   "version": "1.0.0",
   "description": "Shockwave — markdown-vault editor",
   "type": "module",
-  "main": "electron/main.js",
+  "main": "./out/main/index.js",
   "scripts": {
-    "dev": "concurrently -k -n vite,electron -c blue,green \"npm:dev:vite\" \"npm:dev:electron\"",
-    "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "build": "vite build",
-    "start": "electron .",
-    "dist": "npm run build && electron-builder",
+    "dev": "electron-vite dev --watch --remoteDebuggingPort=9222",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder",
     "test": "node --test \"tests/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@vitejs/plugin-react": "^6.0.2",
-    "concurrently": "^9.2.1",
+    "@vitejs/plugin-react": "^5.2.0",
     "electron": "^42.2.0",
     "electron-builder": "^26.8.1",
-    "vite": "^8.0.13",
-    "wait-on": "^9.0.10"
+    "electron-vite": "^5.0.0",
+    "vite": "^7.3.3"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
@@ -49,8 +46,8 @@
     "appId": "com.example.shockwave",
     "productName": "Shockwave",
     "files": [
-      "electron/**",
-      "dist/**"
+      "out/**",
+      "build/icon.png"
     ],
     "mac": {
       "target": "dmg",

@@ -18,7 +18,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Shockwave';
 app.setName(APP_NAME);
 
-const ICON_PATH = path.join(__dirname, '..', 'build', 'icon.png');
+// __dirname under electron-vite is `<project>/out/main/` in dev and inside the
+// asar at runtime. Both layouts have `build/icon.png` two levels up.
+const ICON_PATH = path.join(__dirname, '..', '..', 'build', 'icon.png');
 
 const DEFAULT_SETTINGS = {
   workspaces: [],
@@ -67,7 +69,9 @@ async function writeSettings(obj) {
   await fs.rename(tmp, file);
 }
 
-const DEV_URL = process.env.VITE_DEV_SERVER_URL;
+// electron-vite sets ELECTRON_RENDERER_URL in dev. In production the renderer
+// is loaded from the built out/renderer/ directory.
+const DEV_URL = process.env.ELECTRON_RENDERER_URL;
 
 // Custom `app://` scheme used to serve workspace files (images) to the
 // renderer with webSecurity intact. Must be registered before app.ready.
@@ -110,7 +114,7 @@ function createWindow() {
     title: APP_NAME,
     icon: ICON_PATH,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, '..', 'preload', 'index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
     },
@@ -120,7 +124,7 @@ function createWindow() {
     win.loadURL(DEV_URL);
     win.webContents.openDevTools({ mode: 'detach' });
   } else {
-    win.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
   }
 }
 
