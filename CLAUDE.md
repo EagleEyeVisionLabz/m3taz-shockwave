@@ -16,11 +16,11 @@ For day-to-day workflow (when to restart, how to read main vs renderer logs, how
 
 ## Architecture
 
-Electron app with a Vite + React 19 renderer. The renderer is a markdown-workspace editor (CodeMirror 6) with wiki-links (`[[name]]`), backlinks, tabs, drafts, multiple workspaces, a force-graph view, and inline AI (Ask / Rewrite).
+Electron app with a Vite + React 19 renderer. The renderer is a markdown-workspace editor (CodeMirror 6) with wiki-links (`[[name]]`), backlinks, tabs, drafts, multiple workspaces, a force-graph view, inline AI (Ask / Rewrite), a live-preview / raw view-mode toggle, an editor status bar, and a right-hand coding-agent chat sidebar (pi).
 
 ### Process boundary
 
-- **Main** (`electron/main.js`): owns the filesystem, dialogs, context menus, settings persistence, `nativeTheme`, the file watcher + rename correlator, and AI streaming (`@ai-sdk/anthropic`, `@ai-sdk/openai` via `electron/aiActions.js`). All IPC handlers are registered here. Settings persist to `app.getPath('userData')/settings.json` via an atomic tmp+rename.
+- **Main** (`electron/main.js`): owns the filesystem, dialogs, context menus, settings persistence, `nativeTheme`, the file watcher + rename correlator, inline AI streaming (`@ai-sdk/anthropic`, `@ai-sdk/openai` via `electron/aiActions.js`), and the pi coding-agent session (`electron/codingAgent.js`). All IPC handlers are registered here. Settings persist to `app.getPath('userData')/settings.json` via an atomic tmp+rename.
 - **Preload** (`electron/preload.cjs`): exposes a single `window.api` surface. The renderer never touches Node — every fs/dialog/AI call goes through `window.api.*`.
 - **Renderer** (`src/`): React app rooted at `src/main.jsx` → `App.jsx`. Vite root is `src/` (configured in `electron.vite.config.js`'s `renderer` section); build output goes to `out/renderer/`. Built main/preload land at `out/main/index.js` and `out/preload/index.cjs`.
 
@@ -109,7 +109,8 @@ The watcher only sees inside the active workspace, and the `ignored` predicate s
 ### Cross-process constants to keep in sync
 
 - `APP_NAME` lives in three places: `src/constants.js`, `electron/main.js` (`APP_NAME` const), and `package.json` (`build.productName`). Comments in each file flag this.
-- `FILE_ACTIONS` and `FOLDER_ACTIONS` are duplicated in `src/constants.js` and `electron/main.js` (used by the native context menus).
+- `FILE_ACTIONS`, `FOLDER_ACTIONS`, and `EDITOR_ACTIONS` are duplicated in `src/constants.js` and `electron/main.js` (used by the native context menus).
+- `DEFAULT_SETTINGS` in `electron/main.js` is the schema for `settings.json` — keys include `workspaces`, `activeWorkspaceId`, `appearance.themeMode`, `ai`, `codingAgent`, `sidebarWidth`, `viewMode`, `chatSidebarOpen`, `chatSidebarWidth`. Adding a persisted field means updating `DEFAULT_SETTINGS`, the `readSettings` merge, and every `persistSettings()` call site in `App.jsx` (which passes the whole object on each write).
 
 ### Wiki-link UX inside the editor
 
@@ -122,6 +123,24 @@ The watcher only sees inside the active workspace, and the `ignored` predicate s
 ### Inline AI
 
 Right-click in the editor → "Insert AI Response" (no selection) or "Rewrite with AI" (with selection). The modal (`InlineAiModal.jsx`) collects the prompt; `useInlineAi.run` dispatches `ai:run` with the action id + params. Main (`electron/aiActions.js`) holds the action registry — each action defines its `systemPrompt` and `buildUserMessage`. Streaming is via Vercel `ai`'s `streamText`. Adding a new action means dropping an entry in `ACTIONS` and a constant in `src/constants.js#AI_ACTIONS`. The IPC handler and hook are action-agnostic.
+
+### Coding agent (pi)
+
+Right-side chat sidebar (`src/ChatSidebar.jsx`) backed by `@earendil-works/pi-coding-agent`. The sidebar is collapsed to a 28px strip by default; clicking the 🤖 strip expands it. State (`chatSidebarOpen`, `chatSidebarWidth`) is persisted to settings.
+
+- **Main side** (`electron/codingAgent.js`): keeps **one** pi `AgentSession` at a time, keyed by `(workspacePath, provider, model, apiKey)`. The next `agent:send` whose key differs from the stored one tears down the previous session and creates a new one — there is no eager invalidation on settings change, only lazy reconciliation on the next send. `app.on('before-quit')` calls `agentReset()` to abort cleanly.
+- **IPC**: renderer → `agent:send({ text })`, `agent:abort()`, `agent:reset()`. Main reads workspace + `codingAgent` settings, forwards every pi event to the renderer as `agent:event` and surfaces failures as `agent:error`. The agent runs with the **active workspace as `cwd`**, and uses an in-memory `AuthStorage` + `SessionManager` (sessions do not survive an app restart).
+- **Event protocol consumed by the sidebar**: `agent_start` / `agent_end` gate the running state. `turn_end` carries pi's normalized `usage` (we sum `totalTokens` across turns; each turn re-pays for context so the sum matches billed usage). `message_update` carries `assistantMessageEvent` which is either `text_start` (open a new assistant bubble) or `text_delta` (append to current bubble). `tool_execution_start` / `tool_execution_update` / `tool_execution_end` build collapsible tool entries keyed by `toolCallId`.
+- **Workspace change**: the chat sidebar is mounted with `key={workspacePath ?? 'no-workspace'}` in `App.jsx`, so switching workspaces remounts it and clears the transcript. The pi session itself is reset lazily on the next send (because the key changes).
+- **Sidebar settings UI**: `src/settings/AiSection.jsx` shows two `ProviderModelKey` blocks — one for inline AI, one for the coding agent. They use independent `provider/model/apiKey` and can be set separately.
+
+### Editor status bar & view mode
+
+`src/EditorStatusBar.jsx` is a pure-presentation strip pinned to the bottom of the editor pane, visible only when a tab is active. It shows: backlink count, view-mode toggle (live ↔ raw), word count, character count, and save state. All state lives in `App.jsx`:
+
+- `viewMode` (`VIEW_MODES.LIVE` | `VIEW_MODES.RAW` in `src/constants.js`) is persisted to settings and passed into `<Editor>`. The Editor toggles a CodeMirror Compartment carrying the live-preview decoration bundle without rebuilding the view — cursor, history, and scroll all survive a reconfigure. Only the `dark` prop forces an editor recreation.
+- `editorStats` (`{ words, chars }`) is computed inside `Editor.jsx` (`computeStats`) and pushed up via the `onStats` callback (rAF-throttled).
+- `saveState` (`SAVE_STATES.SAVED` | `SAVE_STATES.UNSAVED` in `src/constants.js`) is set to UNSAVED on every editor change and flipped back to SAVED inside `writeNow()` — but only if `dirtyPathRef.current === null` after the write, so a write that races a subsequent edit doesn't flash SAVED prematurely.
 
 ### Reusable UI primitives
 

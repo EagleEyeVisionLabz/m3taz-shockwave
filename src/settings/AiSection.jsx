@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
+import * as Tabs from '@radix-ui/react-tabs';
 import { AI_PROVIDERS } from '../constants.js';
+import AiSkillsTab from './AiSkillsTab.jsx';
 
 const PROVIDER_OPTIONS = [
   { value: AI_PROVIDERS.ANTHROPIC, label: 'Anthropic' },
@@ -64,7 +66,7 @@ function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange, modelPl
   );
 }
 
-export default function AiSection({ ai, onChange, codingAgent, onCodingAgentChange }) {
+export default function AiSection({ ai, onChange, codingAgent, onCodingAgentChange, activeWorkspaceId }) {
   const aiProvider = ai?.provider ?? AI_PROVIDERS.ANTHROPIC;
   const aiModel = ai?.model ?? '';
   const aiApiKey = ai?.apiKey ?? '';
@@ -76,56 +78,79 @@ export default function AiSection({ ai, onChange, codingAgent, onCodingAgentChan
   const caProvider = codingAgent?.provider ?? AI_PROVIDERS.ANTHROPIC;
   const caModel = codingAgent?.model ?? '';
   const caApiKey = codingAgent?.apiKey ?? '';
+  const caSkills = codingAgent?.skills ?? { global: {}, workspaces: {} };
   const updateCa = (patch) => onCodingAgentChange?.({
-    provider: caProvider, model: caModel, apiKey: caApiKey, ...patch,
+    provider: caProvider, model: caModel, apiKey: caApiKey, skills: caSkills, ...patch,
+  });
+  const onSkillsChange = (nextSkills) => onCodingAgentChange?.({
+    provider: caProvider, model: caModel, apiKey: caApiKey, skills: nextSkills,
   });
 
   return (
     <div className="settings-section">
-      <h2 className="settings-section-title">AI / Coding Agent</h2>
+      <h2 className="settings-section-title">LLM / Agent</h2>
       <p className="settings-section-desc">
-        Configure the models for inline editing and the coding agent. API keys are stored
-        locally on this machine.
+        Configure the models for inline editing and the Agent, and manage the skills the agent can use.
+        API keys are stored locally on this machine.
       </p>
 
-      <h3 className="settings-subsection-title">Inline AI</h3>
-      <p className="settings-field-hint">Used by right-click "Insert AI Response" and "Rewrite with AI" in the editor.</p>
-      <ProviderModelKey
-        idPrefix="ai"
-        provider={aiProvider}
-        model={aiModel}
-        apiKey={aiApiKey}
-        onChange={updateAi}
-        modelPlaceholder={aiProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
-      />
+      <Tabs.Root defaultValue="inline" className="settings-tabs">
+        <Tabs.List className="settings-tabs-list" aria-label="LLM / Agent settings">
+          <Tabs.Trigger value="inline" className="settings-tab">Inline LLM</Tabs.Trigger>
+          <Tabs.Trigger value="agent" className="settings-tab">Agent LLM</Tabs.Trigger>
+          <Tabs.Trigger value="skills" className="settings-tab">Agent Skills</Tabs.Trigger>
+        </Tabs.List>
 
-      <div className="settings-field">
-        <label className="settings-checkbox-row">
-          <input
-            type="checkbox"
-            checked={includeContextByDefault}
-            onChange={(e) => updateAi({ includeContextByDefault: e.target.checked })}
+        <Tabs.Content value="inline" className="settings-tab-content">
+          <p className="settings-field-hint" style={{ marginTop: 0 }}>
+            Used by right-click "Insert AI Response" and "Rewrite with AI" in the editor.
+          </p>
+          <ProviderModelKey
+            idPrefix="ai"
+            provider={aiProvider}
+            model={aiModel}
+            apiKey={aiApiKey}
+            onChange={updateAi}
+            modelPlaceholder={aiProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
           />
-          <span>Include the rest of the document as context by default</span>
-        </label>
-        <p className="settings-field-hint">
-          When checked, AI editing requests include the full document for context. You can still
-          toggle this per request in the prompt window.
-        </p>
-      </div>
+          <div className="settings-field">
+            <label className="settings-checkbox-row">
+              <input
+                type="checkbox"
+                checked={includeContextByDefault}
+                onChange={(e) => updateAi({ includeContextByDefault: e.target.checked })}
+              />
+              <span>Include the rest of the document as context by default</span>
+            </label>
+            <p className="settings-field-hint">
+              When checked, AI editing requests include the full document for context. You can still
+              toggle this per request in the prompt window.
+            </p>
+          </div>
+        </Tabs.Content>
 
-      <h3 className="settings-subsection-title">Coding Agent</h3>
-      <p className="settings-field-hint">
-        Powers the chat sidebar. The agent can read, edit, and run commands inside your active workspace.
-      </p>
-      <ProviderModelKey
-        idPrefix="coding-agent"
-        provider={caProvider}
-        model={caModel}
-        apiKey={caApiKey}
-        onChange={updateCa}
-        modelPlaceholder={caProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
-      />
+        <Tabs.Content value="agent" className="settings-tab-content">
+          <p className="settings-field-hint" style={{ marginTop: 0 }}>
+            Powers the chat sidebar. The agent can read, edit, and run commands inside your active workspace.
+          </p>
+          <ProviderModelKey
+            idPrefix="coding-agent"
+            provider={caProvider}
+            model={caModel}
+            apiKey={caApiKey}
+            onChange={updateCa}
+            modelPlaceholder={caProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
+          />
+        </Tabs.Content>
+
+        <Tabs.Content value="skills" className="settings-tab-content">
+          <AiSkillsTab
+            skills={caSkills}
+            onSkillsChange={onSkillsChange}
+            activeWorkspaceId={activeWorkspaceId}
+          />
+        </Tabs.Content>
+      </Tabs.Root>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import AiSection from './settings/AiSection.jsx';
 const SECTIONS = [
   { id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
   { id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
-  { id: SETTINGS_SECTIONS.AI, label: 'AI / Coding Agent' },
+  { id: SETTINGS_SECTIONS.AI, label: 'LLM / Agent' },
 ];
 
 export default function SettingsModal({
@@ -73,6 +73,7 @@ export default function SettingsModal({
               onChange={onAiChange}
               codingAgent={codingAgent}
               onCodingAgentChange={onCodingAgentChange}
+              activeWorkspaceId={activeWorkspaceId}
             />
           )}
         </div>

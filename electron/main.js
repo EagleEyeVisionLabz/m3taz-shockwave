@@ -11,6 +11,7 @@ import { parseLinks } from './linkParser.js';
 import { getAction } from './aiActions.js';
 import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
+import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -36,6 +37,12 @@ const DEFAULT_SETTINGS = {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
     apiKey: '',
+    // Skill enable/disable state. Source of truth for what's actually loaded into
+    // the pi session — the on-disk skill folder is the source of truth for what
+    // EXISTS (read from pi-agent/skill-library/ at request time).
+    //   global[name]               = 'enabled' | 'disabled'
+    //   workspaces[wsId][name]     = 'inherit' | 'enabled' | 'disabled'
+    skills: { global: {}, workspaces: {} },
   },
   chatSidebarOpen: false,
   chatSidebarWidth: 360,
@@ -54,7 +61,14 @@ async function readSettings() {
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...(parsed.appearance ?? {}) },
       ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai ?? {}) },
-      codingAgent: { ...DEFAULT_SETTINGS.codingAgent, ...(parsed.codingAgent ?? {}) },
+      codingAgent: {
+        ...DEFAULT_SETTINGS.codingAgent,
+        ...(parsed.codingAgent ?? {}),
+        skills: {
+          global: { ...(parsed.codingAgent?.skills?.global ?? {}) },
+          workspaces: { ...(parsed.codingAgent?.skills?.workspaces ?? {}) },
+        },
+      },
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -710,15 +724,52 @@ ipcMain.handle('agent:send', async (evt, { text }) => {
     const settings = await readSettings();
     const ws = (settings.workspaces || []).find((w) => w.id === settings.activeWorkspaceId);
     const workspacePath = ws?.path ?? null;
-    const { provider, model, apiKey } = settings.codingAgent ?? {};
+    const { provider, model, apiKey, skills } = settings.codingAgent ?? {};
 
     await agentSend(
-      { text, workspacePath, provider, model, apiKey },
+      {
+        text,
+        workspacePath,
+        provider,
+        model,
+        apiKey,
+        userDataDir: app.getPath('userData'),
+        skillsState: skills,
+        workspaceId: ws?.id ?? null,
+      },
       (event) => emit('agent:event', event),
     );
   } catch (err) {
     emit('agent:error', { message: err?.message ?? String(err) });
   }
+});
+
+// ---- Skills ----
+ipcMain.handle('skills:list', async () => {
+  return listInstalled(app.getPath('userData'));
+});
+
+ipcMain.handle('skills:libraryDir', async () => {
+  return libraryDirFor(app.getPath('userData'));
+});
+
+ipcMain.handle('skills:importPicker', async () => {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: 'Choose a skill folder (must contain SKILL.md)',
+  });
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return importFromPath(app.getPath('userData'), result.filePaths[0]);
+});
+
+ipcMain.handle('skills:importFromPath', async (_evt, srcPath) => {
+  if (typeof srcPath !== 'string' || !srcPath) throw new Error('No path provided.');
+  return importFromPath(app.getPath('userData'), srcPath);
+});
+
+ipcMain.handle('skills:remove', async (_evt, folderName) => {
+  if (typeof folderName !== 'string' || !folderName) throw new Error('No skill name provided.');
+  return removeSkill(app.getPath('userData'), folderName);
 });
 
 ipcMain.handle('agent:abort', async () => {

@@ -33,6 +33,7 @@
     "@codemirror/view": "^6.43.0",
     "@earendil-works/pi-ai": "^0.75.4",
     "@earendil-works/pi-coding-agent": "^0.75.4",
+    "@radix-ui/react-tabs": "^1.1.13",
     "@replit/codemirror-indentation-markers": "^6.5.3",
     "ai": "^6.0.189",
     "chokidar": "^5.0.0",

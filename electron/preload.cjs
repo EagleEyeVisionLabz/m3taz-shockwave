@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   openFolder: () => ipcRenderer.invoke('dialog:openFolder'),
@@ -63,6 +63,17 @@ contextBridge.exposeInMainWorld('api', {
       ipcRenderer.on('ai:error', listener);
       return () => ipcRenderer.removeListener('ai:error', listener);
     },
+  },
+  skills: {
+    list: () => ipcRenderer.invoke('skills:list'),
+    libraryDir: () => ipcRenderer.invoke('skills:libraryDir'),
+    importPicker: () => ipcRenderer.invoke('skills:importPicker'),
+    importFromPath: (srcPath) => ipcRenderer.invoke('skills:importFromPath', srcPath),
+    remove: (folderName) => ipcRenderer.invoke('skills:remove', folderName),
+    // Exposes Electron's webUtils.getPathForFile so the renderer can resolve a
+    // drag-dropped folder's absolute path. Returns '' for File objects not
+    // backed by disk.
+    pathForFile: (file) => webUtils.getPathForFile(file),
   },
   agent: {
     send: (text) => ipcRenderer.invoke('agent:send', { text }),

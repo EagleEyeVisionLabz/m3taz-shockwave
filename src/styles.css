@@ -1147,6 +1147,212 @@ html, body, #root {
   line-height: 1.4;
 }
 
+/* ---------- Settings tabs (Radix) ---------- */
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-tabs-list {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+  padding: 0;
+}
+
+.settings-tab {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: 8px 12px;
+  margin-bottom: -1px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--fg-secondary);
+  cursor: pointer;
+  border-radius: 0;
+}
+
+.settings-tab:hover { color: var(--fg-primary); }
+
+.settings-tab[data-state="active"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 500;
+}
+
+.settings-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 4px;
+}
+
+.settings-tab-content {
+  outline: none;
+}
+
+/* ---------- Skills tab ---------- */
+
+.skill-dropzone {
+  margin: 12px 0 0;
+  padding: 24px 16px;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: var(--fg-secondary);
+  font-size: 13px;
+  background: var(--bg-sidebar);
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.skill-dropzone.over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--fg-primary);
+}
+
+.skill-dropzone-button {
+  padding: 6px 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.skill-dropzone-button:hover { background: var(--bg-hover); }
+
+.skill-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  color: var(--fg-primary);
+  font-size: 12px;
+}
+
+.skill-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skill-row {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-sidebar);
+}
+
+.skill-row.broken { border-color: var(--border-strong); opacity: 0.85; }
+
+.skill-info { min-width: 0; }
+
+.skill-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--fg-primary);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.skill-broken-badge {
+  font-size: 10px;
+  color: var(--fg-secondary);
+  background: var(--bg-app);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.skill-description {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--fg-secondary);
+  line-height: 1.4;
+}
+
+.skill-folder {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--fg-muted);
+  font-family: var(--font-mono, monospace);
+}
+
+.skill-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.skill-control { display: flex; flex-direction: column; gap: 4px; }
+
+.skill-control-label {
+  font-size: 11px;
+  color: var(--fg-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.skill-state-group {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.skill-state-button {
+  padding: 4px 10px;
+  border: 0;
+  border-right: 1px solid var(--border-strong);
+  background: var(--bg-app);
+  color: var(--fg-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.skill-state-button:last-child { border-right: 0; }
+.skill-state-button:hover { background: var(--bg-hover); color: var(--fg-primary); }
+
+.skill-state-button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.skill-remove-button {
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.skill-remove-button:hover { background: var(--bg-hover); }
+
 /* ---------- Autolinks ---------- */
 
 .cm-autolink {
@@ -1297,10 +1503,23 @@ html, body, #root {
   flex-shrink: 0;
 }
 
-.chat-sidebar-robot {
-  font-size: 16px;
-  line-height: 1;
+.chat-sidebar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg-primary);
   user-select: none;
+}
+
+.chat-sidebar-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+
+.chat-sidebar-title-text {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .chat-sidebar-close {
@@ -1321,6 +1540,22 @@ html, body, #root {
   color: var(--fg-primary);
 }
 
+.chat-sidebar-clear {
+  margin-left: auto;
+  margin-right: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 10px;
+  line-height: 1;
+}
+
+.chat-sidebar-clear:hover { background: var(--bg-hover); }
+
 .chat-sidebar-strip {
   background: var(--bg-thin);
   border-left: 1px solid var(--border);
@@ -1329,9 +1564,11 @@ html, body, #root {
   border-bottom: none;
   cursor: pointer;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 0;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 10px 0;
   color: var(--fg-secondary);
 }
 
@@ -1341,13 +1578,26 @@ html, body, #root {
 }
 
 .chat-sidebar-strip-icon {
-  font-size: 16px;
-  line-height: 1;
+  flex-shrink: 0;
   opacity: 0.7;
   user-select: none;
 }
 
 .chat-sidebar-strip:hover .chat-sidebar-strip-icon {
+  opacity: 1;
+}
+
+.chat-sidebar-strip-label {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+  user-select: none;
+}
+
+.chat-sidebar-strip:hover .chat-sidebar-strip-label {
   opacity: 1;
 }
 

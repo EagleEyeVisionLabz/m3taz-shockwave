@@ -87,6 +87,7 @@ export default function App() {
     provider: AI_PROVIDERS.ANTHROPIC,
     model: 'claude-sonnet-4-5',
     apiKey: '',
+    skills: { global: {}, workspaces: {} },
   });
   const codingAgentSettingsRef = useRef(codingAgentSettings);
   useEffect(() => { codingAgentSettingsRef.current = codingAgentSettings; }, [codingAgentSettings]);
@@ -1080,7 +1081,27 @@ export default function App() {
           title="Open coding agent"
           aria-label="Open coding agent"
         >
-          <span className="chat-sidebar-strip-icon" aria-hidden="true">🤖</span>
+          <svg
+            className="chat-sidebar-strip-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width={16}
+            height={16}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 8V4H8" />
+            <rect width={16} height={12} x={4} y={8} rx={2} />
+            <path d="M2 14h2" />
+            <path d="M20 14h2" />
+            <path d="M15 13v2" />
+            <path d="M9 13v2" />
+          </svg>
+          <span className="chat-sidebar-strip-label">Agent Chat</span>
         </button>
       )}
 

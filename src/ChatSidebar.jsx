@@ -222,6 +222,17 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     try { await window.api.agent.abort(); } catch {}
   }, []);
 
+  const onClear = useCallback(async () => {
+    try { await window.api.agent.reset(); } catch {}
+    if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
+    currentAssistantIdRef.current = null;
+    setMessages([]);
+    setError(null);
+    setRunning(false);
+    setTokens(0);
+    setElapsedMs(0);
+  }, []);
+
   const onKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -232,7 +243,36 @@ export default function ChatSidebar({ onClose, workspacePath }) {
   return (
     <div className="chat-sidebar" role="region" aria-label="Coding agent chat">
       <div className="chat-sidebar-header">
-        <span className="chat-sidebar-robot" aria-hidden="true">🤖</span>
+        <span className="chat-sidebar-title">
+          <svg
+            className="chat-sidebar-icon"
+            xmlns="http://www.w3.org/2000/svg"
+            viewBox="0 0 24 24"
+            width={16}
+            height={16}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 8V4H8" />
+            <rect width={16} height={12} x={4} y={8} rx={2} />
+            <path d="M2 14h2" />
+            <path d="M20 14h2" />
+            <path d="M15 13v2" />
+            <path d="M9 13v2" />
+          </svg>
+          <span className="chat-sidebar-title-text">Agent Chat</span>
+        </span>
+        <button
+          type="button"
+          className="chat-sidebar-clear"
+          onClick={onClear}
+          title="Clear chat and start a new session (picks up new skills)"
+          aria-label="Clear chat"
+        >Clear</button>
         <button
           type="button"
           className="chat-sidebar-close"
