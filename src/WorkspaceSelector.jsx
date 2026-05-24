@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { GearIcon, ChevronDownIcon } from './Icons.jsx';
 
 export default function WorkspaceSelector({
   workspaces,
@@ -55,7 +56,7 @@ export default function WorkspaceSelector({
         title={active?.path ?? 'No workspace open'}
       >
         <span className="workspace-selector-name">{active ? active.name : 'No workspace'}</span>
-        <span className="workspace-selector-chevron" aria-hidden="true">⌄</span>
+        <span className="workspace-selector-chevron" aria-hidden="true"><ChevronDownIcon size={12} /></span>
       </button>
       <button
         className="workspace-selector-gear"
@@ -63,7 +64,7 @@ export default function WorkspaceSelector({
         title="Settings"
         aria-label="Open settings"
       >
-        <span aria-hidden="true">⚙</span>
+        <GearIcon size={16} />
       </button>
     </div>
   );

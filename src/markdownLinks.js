@@ -118,6 +118,19 @@ function buildDecorations(view) {
   return builder.finish();
 }
 
+// Returns the enclosing [text](url) / [![alt](src)](url) link at `pos`, or null.
+// Shape: { from, to, kind: 'text'|'image', text?, imageFrom?, imageTo?, url }.
+// Used by the editor context menu to enable Edit / Remove link.
+export function findLinkAtPos(state, pos) {
+  const tree = syntaxTree(state);
+  let node = tree.resolveInner(pos, 1);
+  while (node && node.name !== 'Link') node = node.parent;
+  if (!node) return null;
+  const parts = extractParts(state, node);
+  if (!parts) return null;
+  return { from: node.from, to: node.to, ...parts };
+}
+
 export const markdownLinks = ViewPlugin.fromClass(
   class {
     constructor(view) {

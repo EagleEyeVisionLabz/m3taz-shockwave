@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { TrashIcon } from '../Icons.jsx';
 
 const GLOBAL_STATES = ['enabled', 'disabled'];
 
@@ -180,11 +181,12 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
                   />
                   <button
                     type="button"
-                    className="skill-remove-button"
+                    className="icon-btn"
                     onClick={() => onRemove(skill)}
                     title="Remove skill"
                     aria-label={`Remove ${skill.name}`}
-                  >Remove</button>
+                    style={{ marginLeft: 'auto' }}
+                  ><TrashIcon size={14} /></button>
                 </div>
               </li>
             );

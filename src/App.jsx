@@ -74,8 +74,10 @@ export default function App() {
   const [titleDraft, setTitleDraft] = useState('');
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsInitialSection, setSettingsInitialSection] = useState(SETTINGS_SECTIONS.WORKSPACES);
-  // When set, renders <UrlPromptModal>. The function is the awaiting promise's resolver.
-  const [urlPromptResolve, setUrlPromptResolve] = useState(null);
+  // When set, renders <UrlPromptModal>. `resolve` is the awaiting promise's
+  // resolver. `initialUrl` / `initialText` (Edit mode) optionally pre-fill the
+  // form. Resolver receives { url, text } | null.
+  const [urlPromptOpts, setUrlPromptOpts] = useState(null);
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
   const [hideLineNumbers, setHideLineNumbers] = useState(false);
   const hideLineNumbersRef = useRef(false);
@@ -207,15 +209,25 @@ export default function App() {
   // active tab is a draft, promote it on the spot (same flow as the keystroke
   // promotion in onEditorChange) so the dropped image has a real folder to
   // land in. Returns null when there's no active tab.
+  // After we promote a draft, the load effect (keyed on activeFile) fires and
+  // would normally readFile from disk + setContent — wiping the buffer (which
+  // is about to receive an image insertion after the await). This ref lets the
+  // load effect know "this path was just promoted, buffer is authoritative,
+  // skip the disk read." Cleared by the load effect after one cycle.
+  const freshlyPromotedPathRef = useRef(null);
   const ensureActiveFilePath = useCallback(async () => {
     if (!activeTab) return null;
     if (!activeTab.isDraft) return activeFile;
     const editor = editorRef.current;
     const currentText = editor?.getText() ?? '';
+    // Write the buffer to disk as the file's initial content so disk == buffer
+    // at the moment of promotion. The load-effect skip below is the belt; this
+    // is the suspenders.
     const newPath = await promoteDraft(activeTab.id, newFileDir(), {
       name: titleDraft || 'Untitled',
-      initialContent: '',
+      initialContent: currentText,
     });
+    freshlyPromotedPathRef.current = newPath;
     linkIndex.updateFile(newPath, currentText);
     // Mark dirty so the buffer (which may have unsaved typing alongside the
     // image drop) gets flushed by the next writeNow tick.
@@ -297,9 +309,24 @@ export default function App() {
   const viewModeRef = useRef(viewMode);
   useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
 
+  // 'idle' | 'saving' | 'saved' | 'error'. `idle` hides the indicator; we land
+  // there 1.5s after a successful save so the badge fades out when nothing's
+  // happening. A ref counts in-flight writes so overlapping saves don't flip
+  // us back to 'saved' too early.
+  const [saveStatus, setSaveStatus] = useState('idle');
+  const inFlightSavesRef = useRef(0);
+  const savedFadeTimerRef = useRef(null);
+
   const persistSettings = useCallback(async (next) => {
-    await window.api.settings.write({
-      workspaces: next.workspaces,
+    inFlightSavesRef.current += 1;
+    if (savedFadeTimerRef.current) {
+      clearTimeout(savedFadeTimerRef.current);
+      savedFadeTimerRef.current = null;
+    }
+    setSaveStatus('saving');
+    try {
+      await window.api.settings.write({
+        workspaces: next.workspaces,
       activeWorkspaceId: next.activeWorkspaceId,
       appearance: {
         themeMode: next.themeMode,
@@ -311,7 +338,20 @@ export default function App() {
       viewMode: next.viewMode ?? viewModeRef.current,
       chatSidebarOpen: next.chatSidebarOpen ?? chatSidebarOpenRef.current,
       chatSidebarWidth: next.chatSidebarWidth ?? chatSidebarWidthRef.current,
-    });
+      });
+      inFlightSavesRef.current -= 1;
+      if (inFlightSavesRef.current === 0) {
+        setSaveStatus('saved');
+        // Fade back to idle after 1.5s so the badge isn't permanent.
+        savedFadeTimerRef.current = setTimeout(() => {
+          savedFadeTimerRef.current = null;
+          setSaveStatus('idle');
+        }, 1500);
+      }
+    } catch (err) {
+      inFlightSavesRef.current -= 1;
+      setSaveStatus('error');
+    }
   }, []);
 
   const persistSidebarWidth = useCallback(async (width) => {
@@ -599,20 +639,24 @@ export default function App() {
     return fileOps.performRename(id, name);
   }, [fileOps, linkIndex, renameTabsPath, selectedFolderPath, showError, writeNow]);
 
-  // ---- URL prompt (used by editor "Add external link") ----
-  const requestUrl = useCallback(() => {
+  // ---- URL prompt (used by editor "Add" / "Edit" external link) ----
+  // Always resolves to { url, text } | null. `text` is undefined in Add mode.
+  const requestUrl = useCallback((opts = {}) => {
     return new Promise((resolve) => {
-      // Wrap the resolver so React's setState doesn't try to invoke it.
-      setUrlPromptResolve(() => resolve);
+      setUrlPromptOpts({
+        resolve,
+        initialUrl: opts.initialUrl,
+        initialText: opts.initialText,
+      });
     });
   }, []);
 
-  const handleUrlSubmit = useCallback((url) => {
-    setUrlPromptResolve((prev) => { prev?.(url); return null; });
+  const handleUrlSubmit = useCallback((value) => {
+    setUrlPromptOpts((prev) => { prev?.resolve?.(value); return null; });
   }, []);
 
   const handleUrlCancel = useCallback(() => {
-    setUrlPromptResolve((prev) => { prev?.(null); return null; });
+    setUrlPromptOpts((prev) => { prev?.resolve?.(null); return null; });
   }, []);
 
   // ---- settings open helpers ----
@@ -850,6 +894,13 @@ export default function App() {
     if (!editor) return;
     if (activeIsDraft || !activeFile) {
       editor.setContent('', null);
+      return;
+    }
+    // Skip the disk read for paths just promoted from a draft — the buffer
+    // already holds the authoritative content (and may be about to receive an
+    // image insertion from the paste/drop handler).
+    if (freshlyPromotedPathRef.current === activeFile) {
+      freshlyPromotedPathRef.current = null;
       return;
     }
     let cancelled = false;
@@ -1204,8 +1255,13 @@ export default function App() {
         </button>
       )}
 
-      {urlPromptResolve && (
-        <UrlPromptModal onSubmit={handleUrlSubmit} onCancel={handleUrlCancel} />
+      {urlPromptOpts && (
+        <UrlPromptModal
+          onSubmit={handleUrlSubmit}
+          onCancel={handleUrlCancel}
+          initialUrl={urlPromptOpts.initialUrl}
+          initialText={urlPromptOpts.initialText}
+        />
       )}
 
       <Dialog
@@ -1260,6 +1316,7 @@ export default function App() {
           onCodingAgentChange={onCodingAgentChange}
           agentSecrets={agentSecrets}
           onAgentSecretsChange={onAgentSecretsChange}
+          saveStatus={saveStatus}
         />
       )}
     </div>

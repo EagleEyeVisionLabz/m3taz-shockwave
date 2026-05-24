@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import Dialog from '../Dialog.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
 import ErrorMessage from '../ErrorMessage.jsx';
+import { TrashIcon, PencilIcon } from '../Icons.jsx';
 
 function formatUpdated(ms) {
   if (!ms) return '';
@@ -203,11 +204,20 @@ export default function AgentSecretsSection({ secrets, onChange }) {
               </div>
               <div className="workspace-actions" onClick={(e) => e.stopPropagation()}>
                 <button
-                  className="workspace-remove"
+                  className="icon-btn"
+                  onClick={() => setDialogTarget(s)}
+                  title={`Edit ${s.name}`}
+                  aria-label={`Edit ${s.name}`}
+                >
+                  <PencilIcon size={14} />
+                </button>
+                <button
+                  className="icon-btn"
                   onClick={() => setConfirmDelete(s.name)}
+                  title={`Delete ${s.name}`}
                   aria-label={`Delete ${s.name}`}
                 >
-                  Delete
+                  <TrashIcon size={14} />
                 </button>
               </div>
             </li>

@@ -2,9 +2,10 @@
 
 :root {
   /* Shared left edge for the title, editor text, and backlinks panel.
-     Must match the editor's gutter+content width. The gutter reserves 5 digits
-     (see `.cm-lineNumbers .cm-gutterElement` minWidth in Editor.jsx). */
-  --text-col-left: 66px;
+     = editor gutter width (66, hardcoded in Editor.jsx) + CodeMirror's built-in
+     `.cm-line` paddingLeft (6) = 72. The grey active-line highlight starts at
+     the gutter's right edge (66); text starts 6px later, at 72. */
+  --text-col-left: 72px;
 
   --bg-app: #ffffff;
   --bg-sidebar: #f5f5f7;
@@ -281,8 +282,9 @@ html, body, #root {
 }
 
 .workspace-selector-chevron {
+  display: inline-flex;
+  align-items: center;
   color: var(--fg-muted);
-  font-size: 14px;
 }
 
 .workspace-selector-gear {
@@ -371,6 +373,12 @@ html, body, #root {
 }
 
 .editor-host { flex-shrink: 0; }
+
+/* "Hide line numbers" keeps the gutter and its reserved width so the text
+   column doesn't shift left — we just hide the digits and the active-line
+   gutter highlight. */
+.editor-host-no-line-numbers .cm-lineNumbers .cm-gutterElement { color: transparent; }
+.editor-host-no-line-numbers .cm-activeLineGutter { background: transparent; }
 
 .editor-nav {
   display: flex;
@@ -498,10 +506,12 @@ html, body, #root {
 }
 
 .tab-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--fg-muted);
-  font-size: 14px;
   line-height: 1;
   padding: 2px 4px;
   border-radius: 3px;
@@ -891,6 +901,33 @@ html, body, #root {
   overflow: hidden;
 }
 
+.settings-save-status {
+  position: absolute;
+  top: 12px;
+  right: 56px;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: var(--bg-popover);
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  user-select: none;
+  pointer-events: none;
+  animation: settings-save-status-in 120ms ease-out;
+}
+.settings-save-status[data-status="saved"] { color: #2a8a3c; }
+.settings-save-status[data-status="error"] { color: var(--fg-error); }
+
+@keyframes settings-save-status-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
 .settings-close {
   position: absolute;
   top: 10px;
@@ -917,6 +954,7 @@ html, body, #root {
   flex-direction: column;
   padding: 14px 8px;
   gap: 2px;
+  overflow-y: auto;
 }
 
 .settings-nav-header {
@@ -1032,6 +1070,15 @@ html, body, #root {
 .workspace-actions button:hover:not(:disabled) { background: var(--bg-hover); }
 .workspace-actions button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+/* Override the row-button defaults for icon buttons so the SVG isn't crushed
+   by font-size: 12px + 6×12 padding. */
+.workspace-actions .icon-btn {
+  padding: 0;
+  font-size: inherit;
+  width: 28px;
+  height: 28px;
+}
+
 .workspace-remove { color: var(--fg-error) !important; }
 
 .workspace-add {
@@ -1127,6 +1174,53 @@ html, body, #root {
   color: var(--fg-primary);
 }
 
+.settings-prompt-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 720px;
+}
+
+.settings-prompt-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-prompt-state {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+}
+.settings-prompt-state[data-state="custom"] { color: var(--accent); }
+
+.settings-button {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  font-size: 12px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.settings-button:hover:not(:disabled) { background: var(--bg-hover); }
+.settings-button:disabled { color: var(--fg-muted); cursor: not-allowed; }
+
+.settings-textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-input);
+  color: var(--fg-primary);
+  border-radius: 6px;
+  resize: vertical;
+}
+.settings-textarea:focus { outline: none; border-color: var(--accent); }
+
 .settings-checkbox-row {
   display: flex;
   align-items: center;
@@ -1196,7 +1290,7 @@ html, body, #root {
 }
 
 /* Tab-level intro paragraph: sets context for the tab. */
-.settings-tab-content > .settings-tab-intro {
+.settings-tab-intro {
   margin: 0 0 4px 0;
   font-size: 12px;
   color: var(--fg-secondary);
@@ -1361,6 +1455,23 @@ html, body, #root {
 }
 
 .skill-remove-button:hover { background: var(--bg-hover); }
+
+/* Shared icon-only button for settings rows (trash, edit pencil, etc.). */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--bg-hover); color: var(--fg-primary); }
+.icon-btn.icon-btn-danger:hover { color: var(--fg-error); }
 
 /* ---------- Autolinks ---------- */
 
@@ -1544,15 +1655,16 @@ html, body, #root {
 }
 
 .chat-sidebar-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--fg-secondary);
-  font-size: 18px;
   width: 22px;
   height: 22px;
   border-radius: 4px;
   cursor: pointer;
-  line-height: 1;
   padding: 0;
 }
 
@@ -1562,18 +1674,20 @@ html, body, #root {
 }
 
 .chat-sidebar-clear {
-  border: 1px solid var(--border-strong);
-  background: var(--bg-app);
-  color: var(--fg-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-secondary);
   border-radius: 6px;
+  width: 28px;
+  height: 26px;
+  padding: 0;
   cursor: pointer;
-  font: inherit;
-  font-size: 12px;
-  padding: 5px 12px;
-  line-height: 1;
 }
 
-.chat-sidebar-clear:hover { background: var(--bg-hover); }
+.chat-sidebar-clear:hover { background: var(--bg-hover); color: var(--fg-primary); }
 
 .chat-sidebar-strip {
   background: var(--bg-thin);
@@ -1892,11 +2006,14 @@ html, body, #root {
 
 .chat-send-btn,
 .chat-stop-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   border-radius: 6px;
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 500;
+  width: 28px;
+  height: 26px;
+  padding: 0;
   cursor: pointer;
 }
 
@@ -1975,7 +2092,7 @@ html, body, #root {
   font-size: 12px;
   color: var(--fg-primary);
 }
-.chat-attachment-icon { font-size: 12px; }
+.chat-attachment-icon { display: inline-flex; align-items: center; color: var(--fg-secondary); }
 .chat-attachment-name {
   white-space: nowrap;
   overflow: hidden;
@@ -1990,6 +2107,9 @@ html, body, #root {
 }
 
 .chat-attachment-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   position: absolute;
   top: -6px;
   right: -6px;
@@ -1999,9 +2119,6 @@ html, body, #root {
   border: 1px solid var(--border);
   background: var(--bg-thin);
   color: var(--fg-primary);
-  font-size: 12px;
-  line-height: 14px;
-  text-align: center;
   padding: 0;
   cursor: pointer;
 }
@@ -2030,12 +2147,13 @@ html, body, #root {
 }
 .chat-attachment-error span { flex: 1; }
 .chat-attachment-error button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: transparent;
   border: none;
   color: inherit;
   cursor: pointer;
-  font-size: 14px;
-  line-height: 1;
   padding: 0 4px;
 }
 

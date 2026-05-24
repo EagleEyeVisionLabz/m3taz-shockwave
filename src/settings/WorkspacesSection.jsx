@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
+import ConfirmDialog from '../ConfirmDialog.jsx';
+import { TrashIcon } from '../Icons.jsx';
 
 export default function WorkspacesSection({
   workspaces,
@@ -7,6 +9,8 @@ export default function WorkspacesSection({
   onSwitch,
   onRemove,
 }) {
+  const [confirmRemoveId, setConfirmRemoveId] = useState(null);
+  const target = workspaces.find((w) => w.id === confirmRemoveId) ?? null;
   return (
     <div className="settings-section">
       <h2 className="settings-section-title">Workspaces</h2>
@@ -37,11 +41,12 @@ export default function WorkspacesSection({
                   Open
                 </button>
                 <button
-                  className="workspace-remove"
-                  onClick={() => onRemove(ws.id)}
+                  className="workspace-remove icon-btn"
+                  onClick={() => setConfirmRemoveId(ws.id)}
+                  title={`Remove ${ws.name}`}
                   aria-label={`Remove ${ws.name}`}
                 >
-                  Remove
+                  <TrashIcon size={14} />
                 </button>
               </div>
             </li>
@@ -50,6 +55,16 @@ export default function WorkspacesSection({
       )}
 
       <button className="workspace-add" onClick={onAdd}>+ Add workspace</button>
+
+      <ConfirmDialog
+        open={!!target}
+        title="Remove workspace"
+        message={target ? `Remove "${target.name}" from this list? The folder on disk is not deleted.` : ''}
+        confirmLabel="Remove"
+        destructive
+        onConfirm={() => { onRemove(confirmRemoveId); setConfirmRemoveId(null); }}
+        onClose={() => setConfirmRemoveId(null)}
+      />
     </div>
   );
 }

@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('api', {
     send: (text, images) => ipcRenderer.invoke('agent:send', { text, images }),
     abort: () => ipcRenderer.invoke('agent:abort'),
     reset: () => ipcRenderer.invoke('agent:reset'),
+    getDefaultSystemPrompt: () => ipcRenderer.invoke('agent:getDefaultSystemPrompt'),
     onEvent: (cb) => {
       const listener = (_evt, payload) => cb(payload);
       ipcRenderer.on('agent:event', listener);

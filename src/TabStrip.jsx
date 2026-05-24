@@ -1,5 +1,6 @@
 import React from 'react';
 import { prettyName } from './linkIndex.js';
+import { XIcon, PlusIcon } from './Icons.jsx';
 
 function shortLabel(path) {
   if (!path) return 'Untitled';
@@ -45,12 +46,12 @@ export default function TabStrip({
               }}
               aria-label="Close tab"
             >
-              ×
+              <XIcon size={12} />
             </button>
           </div>
         );
       })}
-      <button className="tab-add" onClick={onAdd} aria-label="New tab">+</button>
+      <button className="tab-add" onClick={onAdd} aria-label="New tab"><PlusIcon size={14} /></button>
     </div>
   );
 }

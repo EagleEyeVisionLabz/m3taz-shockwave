@@ -23,6 +23,8 @@ export const FOLDER_ACTIONS = Object.freeze({
 export const EDITOR_ACTIONS = Object.freeze({
   ADD_LINK: 'addLink',
   ADD_EXTERNAL_LINK: 'addExternalLink',
+  EDIT_EXTERNAL_LINK: 'editExternalLink',
+  REMOVE_EXTERNAL_LINK: 'removeExternalLink',
   SEND_TO_AGENT: 'sendToAgent',
 });
 

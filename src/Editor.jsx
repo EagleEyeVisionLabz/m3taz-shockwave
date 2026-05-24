@@ -14,7 +14,7 @@ import { wikiLinkCompletions } from './wikiCompletions.js';
 import { hideMarkdownMarkers } from './hideMarkdownMarkers.js';
 import { headingStyles } from './headingStyles.js';
 import { autoLinks } from './autoLinks.js';
-import { markdownLinks } from './markdownLinks.js';
+import { markdownLinks, findLinkAtPos } from './markdownLinks.js';
 import { imagePaste } from './imagePaste.js';
 import { imageWidgets } from './imageWidgets.js';
 import { diffFlashExtension, flashRanges as flashRangesHelper } from './diffFlash.js';
@@ -53,7 +53,6 @@ const Editor = forwardRef(function Editor(
   const viewRef = useRef(null);
   const readOnlyCompartmentRef = useRef(null);
   const livePreviewCompartmentRef = useRef(null);
-  const lineNumbersCompartmentRef = useRef(null);
   const livePreviewExtensionsRef = useRef(null);
   const linkClickRef = useRef(onLinkClick);
   const changeRef = useRef(onChange);
@@ -82,13 +81,10 @@ const Editor = forwardRef(function Editor(
     view.dispatch({ effects: cmp.reconfigure(next) });
   }, [viewMode]);
 
-  // Toggle the line-numbers gutter without rebuilding the editor.
-  useEffect(() => {
-    const view = viewRef.current;
-    const cmp = lineNumbersCompartmentRef.current;
-    if (!view || !cmp) return;
-    view.dispatch({ effects: cmp.reconfigure(hideLineNumbers ? [] : lineNumbers()) });
-  }, [hideLineNumbers]);
+  // "Hide line numbers" doesn't actually remove the gutter — we keep its
+  // reserved width so the text column doesn't shift left. The class on the
+  // host element drives CSS that makes the digits + active-line highlight
+  // invisible. See styles.css `.editor-host-no-line-numbers`.
 
   const handleContextMenu = async (e) => {
     e.preventDefault();
@@ -97,7 +93,14 @@ const Editor = forwardRef(function Editor(
     const { from, to, head } = view.state.selection.main;
     const hasSelection = from !== to;
     const hasFilePath = !!(getActiveFilePathRef?.current);
-    const action = await window.api.showEditorContextMenu({ hasSelection, hasFilePath });
+    // Detect a markdown link (text or image-wrapping) under the cursor/selection
+    // so the context menu can offer Edit / Remove link.
+    const linkAtCursor = findLinkAtPos(view.state, hasSelection ? from : head);
+    const action = await window.api.showEditorContextMenu({
+      hasSelection,
+      hasFilePath,
+      hasLink: !!linkAtCursor,
+    });
     if (!action) return;
     if (action === EDITOR_ACTIONS.ADD_LINK) {
       const selected = view.state.sliceDoc(from, to);
@@ -116,7 +119,8 @@ const Editor = forwardRef(function Editor(
     if (action === EDITOR_ACTIONS.ADD_EXTERNAL_LINK) {
       // Capture {from,to} BEFORE opening the modal — focus leaves the editor.
       const selected = view.state.sliceDoc(from, to);
-      const url = await requestUrlRef.current?.();
+      const result = await requestUrlRef.current?.();
+      const url = result?.url;
       if (!url) { view.focus(); return; }
       const v2 = viewRef.current;
       if (!v2) return;
@@ -125,6 +129,46 @@ const Editor = forwardRef(function Editor(
       v2.dispatch({
         changes: { from, to, insert },
         selection: { anchor: from + insert.length },
+        scrollIntoView: true,
+      });
+      v2.focus();
+      return;
+    }
+    if (action === EDITOR_ACTIONS.REMOVE_EXTERNAL_LINK) {
+      if (!linkAtCursor) { view.focus(); return; }
+      // Text link → unwrap to `text`. Image-wrapping link → unwrap to the
+      // image markdown (preserves the embed, drops only the hyperlink).
+      const replacement = linkAtCursor.kind === 'image'
+        ? view.state.sliceDoc(linkAtCursor.imageFrom, linkAtCursor.imageTo)
+        : linkAtCursor.text;
+      view.dispatch({
+        changes: { from: linkAtCursor.from, to: linkAtCursor.to, insert: replacement },
+        selection: { anchor: linkAtCursor.from + replacement.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+      return;
+    }
+    if (action === EDITOR_ACTIONS.EDIT_EXTERNAL_LINK) {
+      if (!linkAtCursor) { view.focus(); return; }
+      // For image-wrapping links, the visible "text" IS the image markdown —
+      // surface it in the modal so the user can swap the entire content if
+      // they want (or leave it).
+      const initialText = linkAtCursor.kind === 'image'
+        ? view.state.sliceDoc(linkAtCursor.imageFrom, linkAtCursor.imageTo)
+        : (linkAtCursor.text ?? '');
+      const result = await requestUrlRef.current?.({
+        initialUrl: linkAtCursor.url,
+        initialText,
+      });
+      if (!result?.url) { view.focus(); return; }
+      const v2 = viewRef.current;
+      if (!v2) return;
+      const newText = result.text ?? initialText;
+      const insert = `[${newText}](${result.url})`;
+      v2.dispatch({
+        changes: { from: linkAtCursor.from, to: linkAtCursor.to, insert },
+        selection: { anchor: linkAtCursor.from + insert.length },
         scrollIntoView: true,
       });
       v2.focus();
@@ -223,9 +267,6 @@ const Editor = forwardRef(function Editor(
     const livePreviewCompartment = new Compartment();
     livePreviewCompartmentRef.current = livePreviewCompartment;
 
-    const lineNumbersCompartment = new Compartment();
-    lineNumbersCompartmentRef.current = lineNumbersCompartment;
-
     // Decorations that turn the editor into a live preview. Toggling them off
     // (raw mode) shows the underlying markdown syntax. `markdown()` syntax
     // highlighting stays on either way so headings/code keep their colors.
@@ -253,7 +294,7 @@ const Editor = forwardRef(function Editor(
     const extensions = [
       readOnlyCompartment.of(EditorState.readOnly.of(false)),
       diffFlashExtension,
-      lineNumbersCompartment.of(hideLineNumbers ? [] : lineNumbers()),
+      lineNumbers(),
       highlightActiveLine(),
       history(),
       indentOnInput(),
@@ -308,14 +349,20 @@ const Editor = forwardRef(function Editor(
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           backgroundColor: 'transparent',
         },
-        '.cm-content': { paddingLeft: '4px', paddingRight: 'var(--text-col-left)' },
+        '.cm-content': { paddingLeft: '0', paddingRight: 'var(--text-col-left)' },
         '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
         '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
         '.cm-gutters': { backgroundColor: 'transparent', borderRight: 'none' },
-        '.cm-lineNumbers': { paddingLeft: '8px', paddingRight: '12px' },
-        // Reserve room for up to 5-digit line numbers so the gutter width stays
-        // stable through 1 → 10 → 100 → 1000 → 10000 lines.
-        '.cm-lineNumbers .cm-gutterElement': { minWidth: '5ch', boxSizing: 'content-box' },
+        '.cm-lineNumbers': { paddingLeft: '0', paddingRight: '0' },
+        // Gutter is 66px wide (hardcoded). CodeMirror's built-in .cm-line
+        // padding-left adds 6px, so typed text lands at 72 = --text-col-left,
+        // the column title and backlinks anchor to. Numbers right-align inside.
+        '.cm-lineNumbers .cm-gutterElement': {
+          minWidth: '66px',
+          paddingRight: '12px',
+          boxSizing: 'border-box',
+          textAlign: 'right',
+        },
       }),
     ];
     if (dark) extensions.push(oneDark);
@@ -333,13 +380,18 @@ const Editor = forwardRef(function Editor(
       viewRef.current = null;
       readOnlyCompartmentRef.current = null;
       livePreviewCompartmentRef.current = null;
-      lineNumbersCompartmentRef.current = null;
       livePreviewExtensionsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dark]);
 
-  return <div ref={hostRef} className="editor-host" onContextMenu={handleContextMenu} />;
+  return (
+    <div
+      ref={hostRef}
+      className={`editor-host ${hideLineNumbers ? 'editor-host-no-line-numbers' : ''}`}
+      onContextMenu={handleContextMenu}
+    />
+  );
 });
 
 export default Editor;

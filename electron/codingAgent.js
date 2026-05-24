@@ -10,10 +10,11 @@
 // <agentDir>/settings.json `skills: []`, which pi reads when constructing the
 // system prompt. Pi never auto-scans our skill-library folder.
 
-import { createAgentSession, AuthStorage, ModelRegistry, SessionManager } from '@earendil-works/pi-coding-agent';
+import { createAgentSession, AuthStorage, ModelRegistry, SessionManager, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
 import { getModel } from '@earendil-works/pi-ai';
 import { agentDirFor, ensureDirs, listInstalled, computeEffectivePaths, writePiSettings } from './skillLibrary.js';
 import { ensureAgentTokensExtension } from './agentTokensExtension.js';
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 
 const state = {
   session: null,
@@ -21,8 +22,10 @@ const state = {
   key: null,
 };
 
-function makeKey({ workspacePath, provider, model, apiKey }) {
-  return [workspacePath, provider, model, apiKey].join(' ');
+function makeKey({ workspacePath, provider, model, apiKey, systemPrompt }) {
+  // systemPrompt is part of the key so changing it forces a fresh session
+  // (pi's system prompt is baked at session boot).
+  return [workspacePath, provider, model, apiKey, systemPrompt ?? ''].join(' ');
 }
 
 async function teardown() {
@@ -37,8 +40,9 @@ async function teardown() {
   }
 }
 
-async function ensureSession({ workspacePath, provider, model, apiKey, userDataDir, skillsState, workspaceId }, emitEvent) {
-  const key = makeKey({ workspacePath, provider, model, apiKey });
+async function ensureSession({ workspacePath, provider, model, apiKey, systemPrompt, userDataDir, skillsState, workspaceId }, emitEvent) {
+  const effectiveSystemPrompt = (systemPrompt ?? '').trim() || DEFAULT_AGENT_SYSTEM_PROMPT;
+  const key = makeKey({ workspacePath, provider, model, apiKey, systemPrompt: effectiveSystemPrompt });
   // We always recompute the effective skill list before session create so the
   // skills array reflects the current global+workspace state. If the session
   // is already up but the skill set has changed, the user can hit Clear in the
@@ -63,6 +67,16 @@ async function ensureSession({ workspacePath, provider, model, apiKey, userDataD
   const modelRegistry = ModelRegistry.create(authStorage);
   const modelObj = getModel(provider, model);
 
+  // Custom resource loader so we can override pi's default coding-agent system
+  // prompt with ours (see DEFAULT_AGENT_SYSTEM_PROMPT). Still uses the standard
+  // discovery for skills/extensions/prompts/themes under agentDir + cwd.
+  const resourceLoader = new DefaultResourceLoader({
+    cwd: workspacePath,
+    agentDir: agentDirFor(userDataDir),
+    systemPromptOverride: () => effectiveSystemPrompt,
+  });
+  await resourceLoader.reload();
+
   const { session } = await createAgentSession({
     cwd: workspacePath,
     agentDir: agentDirFor(userDataDir),
@@ -70,6 +84,7 @@ async function ensureSession({ workspacePath, provider, model, apiKey, userDataD
     authStorage,
     modelRegistry,
     sessionManager: SessionManager.inMemory(workspacePath),
+    resourceLoader,
   });
 
   state.unsubscribe = session.subscribe(emitEvent);
@@ -79,7 +94,7 @@ async function ensureSession({ workspacePath, provider, model, apiKey, userDataD
 }
 
 export async function agentSend(opts, emitEvent) {
-  const { text, images, workspacePath, provider, model, apiKey } = opts;
+  const { text, images, workspacePath, provider, model, apiKey, systemPrompt } = opts;
   if (!workspacePath) throw new Error('Open a workspace first.');
   if (!provider) throw new Error('Coding agent provider not configured.');
   if (!model) throw new Error('Coding agent model not configured.');

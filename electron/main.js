@@ -9,6 +9,7 @@ import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 import { installAgentTokensBridge } from './agentTokensExtension.js';
+import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,6 +29,9 @@ const DEFAULT_SETTINGS = {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
     apiKey: '',
+    // Pre-filled with the default on first install so users can read + edit.
+    // "Reset to default" in the UI writes the current default back into here.
+    systemPrompt: DEFAULT_AGENT_SYSTEM_PROMPT,
     // Skill enable/disable state. Source of truth for what's actually loaded into
     // the pi session — the on-disk skill folder is the source of truth for what
     // EXISTS (read from pi-agent/skill-library/ at request time).
@@ -155,6 +159,8 @@ const FILE_ACTIONS = Object.freeze({
 const EDITOR_ACTIONS = Object.freeze({
   ADD_LINK: 'addLink',
   ADD_EXTERNAL_LINK: 'addExternalLink',
+  EDIT_EXTERNAL_LINK: 'editExternalLink',
+  REMOVE_EXTERNAL_LINK: 'removeExternalLink',
   SEND_TO_AGENT: 'sendToAgent',
 });
 
@@ -625,7 +631,7 @@ ipcMain.handle('fs:renameFolder', async (_evt, { fromPath, toName }) => {
   return candidate;
 });
 
-ipcMain.handle('context:editorMenu', async (evt, { hasSelection, hasFilePath } = {}) => {
+ipcMain.handle('context:editorMenu', async (evt, { hasSelection, hasFilePath, hasLink } = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   return new Promise((resolve) => {
     let chosen = null;
@@ -634,6 +640,13 @@ ipcMain.handle('context:editorMenu', async (evt, { hasSelection, hasFilePath } =
       template.push(
         { label: 'Add link',          click: () => { chosen = EDITOR_ACTIONS.ADD_LINK; } },
         { label: 'Add external link', click: () => { chosen = EDITOR_ACTIONS.ADD_EXTERNAL_LINK; } },
+        { type: 'separator' },
+      );
+    }
+    if (hasLink) {
+      template.push(
+        { label: 'Edit external link',   click: () => { chosen = EDITOR_ACTIONS.EDIT_EXTERNAL_LINK; } },
+        { label: 'Remove external link', click: () => { chosen = EDITOR_ACTIONS.REMOVE_EXTERNAL_LINK; } },
         { type: 'separator' },
       );
     }
@@ -686,7 +699,7 @@ ipcMain.handle('agent:send', async (evt, { text, images }) => {
     const settings = await readSettings();
     const ws = (settings.workspaces || []).find((w) => w.id === settings.activeWorkspaceId);
     const workspacePath = ws?.path ?? null;
-    const { provider, model, apiKey, skills } = settings.codingAgent ?? {};
+    const { provider, model, apiKey, skills, systemPrompt } = settings.codingAgent ?? {};
 
     await agentSend(
       {
@@ -696,6 +709,7 @@ ipcMain.handle('agent:send', async (evt, { text, images }) => {
         provider,
         model,
         apiKey,
+        systemPrompt,
         userDataDir: app.getPath('userData'),
         skillsState: skills,
         workspaceId: ws?.id ?? null,
@@ -742,6 +756,8 @@ ipcMain.handle('agent:abort', async () => {
 ipcMain.handle('agent:reset', async () => {
   try { await agentReset(); } catch {}
 });
+
+ipcMain.handle('agent:getDefaultSystemPrompt', async () => DEFAULT_AGENT_SYSTEM_PROMPT);
 
 function timestampForFilename(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');

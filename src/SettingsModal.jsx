@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { SETTINGS_SECTIONS } from './constants.js';
+import { XIcon, CheckCircleIcon } from './Icons.jsx';
 import WorkspacesSection from './settings/WorkspacesSection.jsx';
 import AppearanceSection from './settings/AppearanceSection.jsx';
-import AgentLlmSection from './settings/AgentLlmSection.jsx';
+import AgentChatSection from './settings/AgentChatSection.jsx';
 import AiSkillsTab from './settings/AiSkillsTab.jsx';
 import WorkspaceSkillsTab from './settings/WorkspaceSkillsTab.jsx';
 import AgentSecretsSection from './settings/AgentSecretsSection.jsx';
@@ -15,7 +16,7 @@ const NAV = [
   { kind: 'item', id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
   { kind: 'item', id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
   { kind: 'header', label: 'AI' },
-  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'LLM' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'Agent Chat' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SKILLS, label: 'Global Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_WORKSPACE_SKILLS, label: 'Workspace Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SECRETS, label: 'API Secrets' },
@@ -39,6 +40,7 @@ export default function SettingsModal({
   onCodingAgentChange,
   agentSecrets,
   onAgentSecretsChange,
+  saveStatus,
 }) {
   const [active, setActive] = useState(initialSection || DEFAULT_SECTION);
 
@@ -61,7 +63,19 @@ export default function SettingsModal({
   return (
     <div className="settings-backdrop" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
-        <button className="settings-close" onClick={onClose} aria-label="Close settings">×</button>
+        {saveStatus && saveStatus !== 'idle' && (
+          <div className="settings-save-status" data-status={saveStatus}>
+            {saveStatus === 'saving' && <span>Saving…</span>}
+            {saveStatus === 'error' && <span>Save failed</span>}
+            {saveStatus === 'saved' && (
+              <>
+                <CheckCircleIcon size={14} />
+                <span>Saved</span>
+              </>
+            )}
+          </div>
+        )}
+        <button className="settings-close" onClick={onClose} aria-label="Close settings"><XIcon size={16} /></button>
         <nav className="settings-nav">
           {NAV.map((row, idx) => {
             if (row.kind === 'header') {
@@ -99,7 +113,7 @@ export default function SettingsModal({
             />
           )}
           {active === SETTINGS_SECTIONS.AGENT_LLM && (
-            <AgentLlmSection
+            <AgentChatSection
               codingAgent={codingAgent}
               onCodingAgentChange={onCodingAgentChange}
             />

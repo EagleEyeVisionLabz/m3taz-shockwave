@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AI_PROVIDERS } from '../constants.js';
 
 const PROVIDER_OPTIONS = [
@@ -64,22 +64,43 @@ function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange, modelPl
   );
 }
 
-export default function AgentLlmSection({ codingAgent, onCodingAgentChange }) {
+export default function AgentChatSection({ codingAgent, onCodingAgentChange }) {
   const caProvider = codingAgent?.provider ?? AI_PROVIDERS.ANTHROPIC;
   const caModel = codingAgent?.model ?? '';
   const caApiKey = codingAgent?.apiKey ?? '';
+  const caSystemPrompt = codingAgent?.systemPrompt ?? '';
   const caSkills = codingAgent?.skills ?? { global: {}, workspaces: {} };
   const updateCa = (patch) => onCodingAgentChange?.({
-    provider: caProvider, model: caModel, apiKey: caApiKey, skills: caSkills, ...patch,
+    provider: caProvider,
+    model: caModel,
+    apiKey: caApiKey,
+    systemPrompt: caSystemPrompt,
+    skills: caSkills,
+    ...patch,
   });
+
+  // The "Reset to default" button pulls the current default from main
+  // (electron/agentSystemPrompt.js) so the renderer doesn't keep its own copy.
+  const [defaultPrompt, setDefaultPrompt] = useState('');
+  useEffect(() => {
+    let active = true;
+    window.api.agent.getDefaultSystemPrompt().then((p) => {
+      if (active) setDefaultPrompt(p ?? '');
+    });
+    return () => { active = false; };
+  }, []);
+
+  const isDefault = caSystemPrompt === defaultPrompt && defaultPrompt !== '';
 
   return (
     <div className="settings-section">
-      <h2 className="settings-section-title">LLM</h2>
+      <h2 className="settings-section-title">Agent Chat</h2>
       <p className="settings-section-desc">
-        Powers the chat sidebar. The agent can read, edit, and run commands inside your active
-        workspace. The API key is encrypted on this machine using your OS keychain.
+        The chat sidebar agent can read, edit, and run commands inside your active workspace.
+        API keys are encrypted on this machine using your OS keychain.
       </p>
+
+      <h3 className="settings-subsection-title">LLM</h3>
       <ProviderModelKey
         idPrefix="coding-agent"
         provider={caProvider}
@@ -88,6 +109,35 @@ export default function AgentLlmSection({ codingAgent, onCodingAgentChange }) {
         onChange={updateCa}
         modelPlaceholder={caProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
       />
+
+      <h3 className="settings-subsection-title" style={{ marginTop: 24 }}>System Prompt</h3>
+      <p className="settings-tab-intro">
+        Pre-filled on install. Edit freely; takes effect on the next chat session (hit reset in the
+        sidebar to apply now).
+      </p>
+      <div className="settings-prompt-block">
+        <textarea
+          id="coding-agent-system-prompt"
+          className="settings-textarea"
+          value={caSystemPrompt}
+          onChange={(e) => updateCa({ systemPrompt: e.target.value })}
+          spellCheck={false}
+          rows={12}
+        />
+        <div className="settings-prompt-footer">
+          <span className="settings-prompt-state" data-state={isDefault ? 'default' : 'custom'}>
+            {isDefault ? 'Default' : 'Customized'}
+          </span>
+          <button
+            type="button"
+            className="settings-button"
+            onClick={() => updateCa({ systemPrompt: defaultPrompt })}
+            disabled={isDefault || !defaultPrompt}
+          >
+            Reset to default
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

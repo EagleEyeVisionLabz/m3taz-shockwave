@@ -1,7 +1,7 @@
 import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { PaperclipIcon } from './Icons.jsx';
+import { PaperclipIcon, PlayIcon, StopIcon, RotateCcwIcon, XIcon, FileTextIcon } from './Icons.jsx';
 import {
   classify,
   readAsBase64,
@@ -79,7 +79,7 @@ function AttachmentChip({ att, onRemove }) {
         />
       ) : (
         <div className="chat-attachment-text" title={att.name}>
-          <span className="chat-attachment-icon">📄</span>
+          <span className="chat-attachment-icon"><FileTextIcon size={12} /></span>
           <span className="chat-attachment-name">{att.name}</span>
           <span className="chat-attachment-size">{formatBytes(att.bytes)}</span>
         </div>
@@ -90,7 +90,7 @@ function AttachmentChip({ att, onRemove }) {
           className="chat-attachment-remove"
           onClick={() => onRemove(att.id)}
           aria-label={`Remove ${att.name}`}
-        >×</button>
+        ><XIcon size={10} /></button>
       )}
     </div>
   );
@@ -512,7 +512,7 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
           onClick={onClose}
           title="Close coding agent"
           aria-label="Close coding agent"
-        >×</button>
+        ><XIcon size={14} /></button>
       </div>
 
       <div ref={scrollRef} className="chat-messages">
@@ -577,7 +577,7 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
         {rejected && (
           <div className="chat-attachment-error">
             <span>{rejected.name}: {rejected.reason}</span>
-            <button type="button" onClick={() => setRejected(null)} aria-label="Dismiss">×</button>
+            <button type="button" onClick={() => setRejected(null)} aria-label="Dismiss"><XIcon size={12} /></button>
           </div>
         )}
         <textarea
@@ -611,18 +611,26 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
             type="button"
             className="chat-sidebar-clear"
             onClick={onClear}
-            title="Clear chat and start a new session (picks up new skills)"
-            aria-label="Clear chat"
-          >Clear</button>
+            title="Start a new session (clears the chat, picks up new skills)"
+            aria-label="New session"
+          ><RotateCcwIcon size={14} /></button>
           {running ? (
-            <button type="button" className="chat-stop-btn" onClick={onStop}>Stop</button>
+            <button
+              type="button"
+              className="chat-stop-btn"
+              onClick={onStop}
+              title="Stop"
+              aria-label="Stop"
+            ><StopIcon size={14} /></button>
           ) : (
             <button
               type="button"
               className="chat-send-btn"
               onClick={onSend}
               disabled={(!input.trim() && attachments.length === 0) || !workspacePath}
-            >Send</button>
+              title="Send"
+              aria-label="Send"
+            ><PlayIcon size={14} /></button>
           )}
         </div>
       </div>
