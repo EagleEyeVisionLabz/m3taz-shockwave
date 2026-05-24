@@ -136,10 +136,11 @@ export function computeEffectivePaths(installed, skillsState, workspaceId) {
   return enabled;
 }
 
-// Write the effective `skills: []` array to <agentDir>/settings.json so pi
-// loads exactly that set on next session boot. Merge into any existing pi
-// settings file to preserve anything pi has put there itself.
-export async function writePiSettings(userDataDir, effectivePaths) {
+// Write `skills: []` and `extensions: []` to <agentDir>/settings.json so pi
+// loads exactly that set on next session boot. Merges into any existing pi
+// settings file to preserve anything pi has put there itself. Either field
+// may be omitted; the existing value is kept untouched.
+export async function writePiSettings(userDataDir, { skills, extensions } = {}) {
   await ensureDirs(userDataDir);
   const file = piSettingsPath(userDataDir);
   let current = {};
@@ -150,7 +151,9 @@ export async function writePiSettings(userDataDir, effectivePaths) {
   } catch {
     current = {};
   }
-  const next = { ...current, skills: effectivePaths };
+  const next = { ...current };
+  if (Array.isArray(skills)) next.skills = skills;
+  if (Array.isArray(extensions)) next.extensions = extensions;
   const tmp = `${file}.tmp`;
   await fs.writeFile(tmp, JSON.stringify(next, null, 2), 'utf8');
   await fs.rename(tmp, file);

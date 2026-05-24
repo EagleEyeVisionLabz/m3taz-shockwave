@@ -1,17 +1,14 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, protocol, net } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, protocol, net, safeStorage } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import fs from 'node:fs/promises';
 import crypto from 'node:crypto';
 import chokidar from 'chokidar';
-import { streamText } from 'ai';
-import { createAnthropic } from '@ai-sdk/anthropic';
-import { createOpenAI } from '@ai-sdk/openai';
 import { parseLinks } from './linkParser.js';
-import { getAction } from './aiActions.js';
 import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
+import { installAgentTokensBridge } from './agentTokensExtension.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -26,13 +23,7 @@ const ICON_PATH = path.join(__dirname, '..', '..', 'build', 'icon.png');
 const DEFAULT_SETTINGS = {
   workspaces: [],
   activeWorkspaceId: null,
-  appearance: { themeMode: 'system' },
-  ai: {
-    provider: 'anthropic',
-    model: 'claude-sonnet-4-5',
-    apiKey: '',
-    includeContextByDefault: false,
-  },
+  appearance: { themeMode: 'system', hideLineNumbers: false },
   codingAgent: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
@@ -44,9 +35,45 @@ const DEFAULT_SETTINGS = {
     //   workspaces[wsId][name]     = 'inherit' | 'enabled' | 'disabled'
     skills: { global: {}, workspaces: {} },
   },
+  // Global, user-managed API tokens. Each entry: { name, description, token, createdAt, updatedAt }.
+  // `name` is the unique identifier (case-insensitive). `token` is encrypted on disk
+  // via safeStorage (see encryptSecret).
+  agentSecrets: [],
   chatSidebarOpen: false,
   chatSidebarWidth: 360,
 };
+
+// ─── Secret encryption ───────────────────────────────────────────────────────
+// safeStorage uses the OS keychain (macOS Keychain / Windows DPAPI / libsecret
+// on Linux). Encrypted values are tagged with ENC_PREFIX so legacy plaintext
+// values (from before encryption was wired in) still load and auto-migrate on
+// the next write. On Linux without a keyring, safeStorage falls back to a
+// hardcoded-password mode; warn once so the user knows.
+const ENC_PREFIX = 'enc:v1:';
+let warnedNoEncryption = false;
+
+function encryptSecret(plain) {
+  if (!plain) return '';
+  if (!safeStorage.isEncryptionAvailable()) {
+    if (!warnedNoEncryption) {
+      console.warn('[secrets] safeStorage encryption unavailable — secrets stored in plaintext');
+      warnedNoEncryption = true;
+    }
+    return plain;
+  }
+  return ENC_PREFIX + safeStorage.encryptString(plain).toString('base64');
+}
+
+function decryptSecret(stored) {
+  if (!stored) return '';
+  if (!stored.startsWith(ENC_PREFIX)) return stored;
+  try {
+    return safeStorage.decryptString(Buffer.from(stored.slice(ENC_PREFIX.length), 'base64'));
+  } catch (err) {
+    console.warn('[secrets] failed to decrypt:', err.message);
+    return '';
+  }
+}
 
 function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
@@ -56,11 +83,10 @@ async function readSettings() {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8');
     const parsed = JSON.parse(raw);
-    return {
+    const merged = {
       ...DEFAULT_SETTINGS,
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...(parsed.appearance ?? {}) },
-      ai: { ...DEFAULT_SETTINGS.ai, ...(parsed.ai ?? {}) },
       codingAgent: {
         ...DEFAULT_SETTINGS.codingAgent,
         ...(parsed.codingAgent ?? {}),
@@ -69,17 +95,37 @@ async function readSettings() {
           workspaces: { ...(parsed.codingAgent?.skills?.workspaces ?? {}) },
         },
       },
+      agentSecrets: Array.isArray(parsed.agentSecrets) ? parsed.agentSecrets : [],
     };
+    // Decrypt secret-bearing fields. Legacy plaintext values pass through
+    // unchanged via decryptSecret's no-prefix branch and get re-encrypted on
+    // the next write.
+    merged.codingAgent.apiKey = decryptSecret(merged.codingAgent.apiKey);
+    merged.agentSecrets = merged.agentSecrets.map((s) => ({
+      ...s,
+      token: decryptSecret(s.token ?? ''),
+    }));
+    return merged;
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, agentSecrets: [] };
   }
 }
 
 async function writeSettings(obj) {
   const file = settingsPath();
   const tmp = `${file}.tmp`;
+  // Clone + encrypt secret-bearing fields so the on-disk file never contains
+  // plaintext tokens. The caller's object is untouched.
+  const out = structuredClone(obj);
+  if (out.codingAgent) out.codingAgent.apiKey = encryptSecret(out.codingAgent.apiKey ?? '');
+  if (Array.isArray(out.agentSecrets)) {
+    out.agentSecrets = out.agentSecrets.map((s) => ({
+      ...s,
+      token: encryptSecret(s.token ?? ''),
+    }));
+  }
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf8');
+  await fs.writeFile(tmp, JSON.stringify(out, null, 2), 'utf8');
   await fs.rename(tmp, file);
 }
 
@@ -109,7 +155,7 @@ const FILE_ACTIONS = Object.freeze({
 const EDITOR_ACTIONS = Object.freeze({
   ADD_LINK: 'addLink',
   ADD_EXTERNAL_LINK: 'addExternalLink',
-  INLINE_AI: 'inlineAi',
+  SEND_TO_AGENT: 'sendToAgent',
 });
 
 // Keep in sync with src/constants.js FOLDER_ACTIONS.
@@ -579,7 +625,7 @@ ipcMain.handle('fs:renameFolder', async (_evt, { fromPath, toName }) => {
   return candidate;
 });
 
-ipcMain.handle('context:editorMenu', async (evt, { hasSelection } = {}) => {
+ipcMain.handle('context:editorMenu', async (evt, { hasSelection, hasFilePath } = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   return new Promise((resolve) => {
     let chosen = null;
@@ -591,13 +637,13 @@ ipcMain.handle('context:editorMenu', async (evt, { hasSelection } = {}) => {
         { type: 'separator' },
       );
     }
-    template.push(
-      {
-        label: hasSelection ? 'Rewrite with AI' : 'Insert AI Response',
-        click: () => { chosen = EDITOR_ACTIONS.INLINE_AI; },
-      },
-      { type: 'separator' },
-    );
+    if (hasFilePath) {
+      template.push({
+        label: 'Message Agent',
+        click: () => { chosen = EDITOR_ACTIONS.SEND_TO_AGENT; },
+      });
+      template.push({ type: 'separator' });
+    }
     template.push(
       { role: 'cut',   enabled: hasSelection },
       { role: 'copy',  enabled: hasSelection },
@@ -621,90 +667,6 @@ ipcMain.handle('settings:write', async (_evt, obj) => {
   await writeSettings(obj);
 });
 
-// ---- AI streaming ----
-//
-// One in-flight request per requestId. The renderer sends:
-//   { requestId, action: 'ask'|'rewrite', params: {...} }
-// The action registry (electron/aiActions.js) maps that to a system prompt
-// and a user message; everything else (streaming, cancellation, error
-// reporting) is action-agnostic.
-
-const inflightAi = new Map(); // requestId -> AbortController
-
-function modelFactoryFor(provider) {
-  return provider === 'openai' ? createOpenAI : createAnthropic;
-}
-
-ipcMain.handle('ai:run', async (evt, { requestId, action: actionId, params }) => {
-  const win = BrowserWindow.fromWebContents(evt.sender);
-  if (!win) return;
-  const send = (channel, payload) => {
-    if (!win.isDestroyed()) win.webContents.send(channel, payload);
-  };
-
-  try {
-    const action = getAction(actionId);
-    if (!action) {
-      send('ai:error', { requestId, message: `Unknown AI action: ${actionId}` });
-      return;
-    }
-
-    const settings = await readSettings();
-    const { provider, model, apiKey } = settings.ai ?? {};
-    if (!apiKey) {
-      send('ai:error', { requestId, message: 'No API key set. Open Settings → AI / Coding Agent to add one.' });
-      return;
-    }
-    if (!model) {
-      send('ai:error', { requestId, message: 'No model set. Open Settings → AI / Coding Agent to choose one.' });
-      return;
-    }
-
-    const client = modelFactoryFor(provider)({ apiKey });
-
-    const userMessage = action.buildUserMessage(params ?? {});
-
-    const controller = new AbortController();
-    inflightAi.set(requestId, controller);
-
-    let errorMessage = null;
-
-    const result = streamText({
-      model: client(model),
-      system: action.systemPrompt,
-      prompt: userMessage,
-      abortSignal: controller.signal,
-      onError: ({ error }) => {
-        errorMessage = error?.message ?? String(error);
-      },
-    });
-
-    try {
-      for await (const delta of result.textStream) {
-        if (controller.signal.aborted) break;
-        send('ai:chunk', { requestId, delta });
-      }
-    } catch (err) {
-      errorMessage = errorMessage ?? (err?.message ?? String(err));
-    }
-
-    if (!controller.signal.aborted) {
-      if (errorMessage) send('ai:error', { requestId, message: errorMessage });
-      else send('ai:done', { requestId });
-    }
-    inflightAi.delete(requestId);
-  } catch (err) {
-    send('ai:error', { requestId, message: err?.message ?? String(err) });
-    inflightAi.delete(requestId);
-  }
-});
-
-ipcMain.handle('ai:cancel', async (_evt, { requestId }) => {
-  const ctrl = inflightAi.get(requestId);
-  if (ctrl) ctrl.abort();
-  inflightAi.delete(requestId);
-});
-
 // ---- Coding agent (pi) ----
 //
 // One pi AgentSession at a time. The renderer sends `agent:send` with the prompt
@@ -713,7 +675,7 @@ ipcMain.handle('ai:cancel', async (_evt, { requestId }) => {
 // renderer relies on the event stream's `agent_start` / `agent_end` boundaries to
 // gate its send button.
 
-ipcMain.handle('agent:send', async (evt, { text }) => {
+ipcMain.handle('agent:send', async (evt, { text, images }) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   if (!win) return;
   const emit = (channel, payload) => {
@@ -729,6 +691,7 @@ ipcMain.handle('agent:send', async (evt, { text }) => {
     await agentSend(
       {
         text,
+        images,
         workspacePath,
         provider,
         model,
@@ -1048,6 +1011,14 @@ nativeTheme.on('updated', () => {
       dark: nativeTheme.shouldUseDarkColors,
     });
   }
+});
+
+// Install the bridge the agent-tokens pi extension uses to fetch decrypted
+// secrets. Re-reads on every call so user-side edits to secrets are picked
+// up mid-conversation without restarting the session.
+installAgentTokensBridge(async () => {
+  const settings = await readSettings();
+  return settings.agentSecrets ?? [];
 });
 
 app.whenReady().then(() => {

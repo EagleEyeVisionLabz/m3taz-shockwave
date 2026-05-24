@@ -11,17 +11,17 @@ import WorkspaceSelector from './WorkspaceSelector.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import UrlPromptModal from './UrlPromptModal.jsx';
 import ErrorMessage from './ErrorMessage.jsx';
-import ErrorDialog from './ErrorDialog.jsx';
-import InlineAiModal from './InlineAiModal.jsx';
 import EditorStatusBar from './EditorStatusBar.jsx';
 import ChatSidebar from './ChatSidebar.jsx';
+import Dialog from './Dialog.jsx';
+import { diffWordsWithSpace } from 'diff';
+import { rangesAddedFromDiff } from './diffFlash.js';
 import { prettyName } from './linkIndex.js';
 import { rewriteReferences } from './renameOps.js';
-import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, AI_ACTIONS, VIEW_MODES, SAVE_STATES } from './constants.js';
+import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, VIEW_MODES, SAVE_STATES } from './constants.js';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
-import { useInlineAi } from './hooks/useInlineAi.js';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -77,12 +77,9 @@ export default function App() {
   // When set, renders <UrlPromptModal>. The function is the awaiting promise's resolver.
   const [urlPromptResolve, setUrlPromptResolve] = useState(null);
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
-  const [aiSettings, setAiSettings] = useState({
-    provider: AI_PROVIDERS.ANTHROPIC,
-    model: 'claude-sonnet-4-5',
-    apiKey: '',
-    includeContextByDefault: false,
-  });
+  const [hideLineNumbers, setHideLineNumbers] = useState(false);
+  const hideLineNumbersRef = useRef(false);
+  useEffect(() => { hideLineNumbersRef.current = hideLineNumbers; }, [hideLineNumbers]);
   const [codingAgentSettings, setCodingAgentSettings] = useState({
     provider: AI_PROVIDERS.ANTHROPIC,
     model: 'claude-sonnet-4-5',
@@ -91,7 +88,11 @@ export default function App() {
   });
   const codingAgentSettingsRef = useRef(codingAgentSettings);
   useEffect(() => { codingAgentSettingsRef.current = codingAgentSettings; }, [codingAgentSettings]);
-  const [aiError, setAiError] = useState(null);
+  // Global agent secrets — list of { name, description, token, createdAt, updatedAt }.
+  // Tokens come from main already decrypted; persisted via the standard settings flow.
+  const [agentSecrets, setAgentSecrets] = useState([]);
+  const agentSecretsRef = useRef(agentSecrets);
+  useEffect(() => { agentSecretsRef.current = agentSecrets; }, [agentSecrets]);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -103,6 +104,9 @@ export default function App() {
   const [viewMode, setViewMode] = useState(VIEW_MODES.LIVE);
   const [editorStats, setEditorStats] = useState({ words: 0, chars: 0 });
   const [saveState, setSaveState] = useState(SAVE_STATES.SAVED);
+  // Pending "Send to Agent" payload waiting on the Replace/Append decision.
+  // Non-null only while the collision dialog is open.
+  const [sendToAgentPending, setSendToAgentPending] = useState(null);
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null;
   const workspacePath = activeWorkspace?.path ?? null;
@@ -139,56 +143,23 @@ export default function App() {
   const editorRef = useRef(null);
   // ---- file tree ref (imperative API: editNode(id)) ----
   const fileTreeRef = useRef(null);
+  // ---- chat sidebar ref (imperative API: setComposerText, getComposerText, focusComposer) ----
+  // Use a callback ref + ready flag so the "Send to Agent" pending injection
+  // effect re-runs when ChatSidebar mounts (sidebar was previously collapsed).
+  const chatSidebarRef = useRef(null);
+  const [chatSidebarReady, setChatSidebarReady] = useState(false);
+  const setChatSidebarRef = useCallback((handle) => {
+    chatSidebarRef.current = handle;
+    setChatSidebarReady(!!handle);
+  }, []);
+  // { text, append } waiting for the sidebar's imperative ref to attach.
+  const [pendingComposerInjection, setPendingComposerInjection] = useState(null);
 
   // ---- save lifecycle (stays in App, crosses concerns) ----
   const dirtyPathRef = useRef(null);
   const saveTimerRef = useRef(null);
 
   const linkIndex = useLinkIndex(tree);
-
-  // ---- Inline AI (Ask / Rewrite) ----
-  // The hook owns streaming, the editor lock, and cancellation. The modal
-  // gathers the user's prompt before we dispatch.
-  //
-  // writeNow saves; it does NOT cancel the AI stream — the debounced save
-  // fires every ~500ms during streaming and we don't want to kill the stream.
-  // flushAndCancel is the variant used by paths that change the active file
-  // (tab switch, workspace switch, beforeunload), where the stream MUST stop.
-  const inlineAiRef = useRef(null);
-  const inlineAi = useInlineAi({ editorRef, onError: setAiError });
-  inlineAiRef.current = inlineAi;
-
-  // The modal is open whenever this is non-null. It holds everything we
-  // captured from the editor at the moment of right-click, since focus will
-  // move into the modal and we can't read the selection again later.
-  const [inlineAiRequest, setInlineAiRequest] = useState(null);
-
-  const onInlineAiTrigger = useCallback(({ from, to, selection, contextBefore, contextAfter }) => {
-    const hasSelection = from !== to;
-    setInlineAiRequest({
-      action: hasSelection ? AI_ACTIONS.REWRITE : AI_ACTIONS.INSERT,
-      from,
-      to,
-      selection,
-      contextBefore,
-      contextAfter,
-    });
-  }, []);
-
-  const onInlineAiCancel = useCallback(() => {
-    setInlineAiRequest(null);
-  }, []);
-
-  const onInlineAiSubmit = useCallback(({ prompt, includeContext }) => {
-    if (!inlineAiRequest) return;
-    const { action, from, to, selection, contextBefore, contextAfter } = inlineAiRequest;
-    const params = action === AI_ACTIONS.REWRITE
-      ? { userPrompt: prompt, selection, contextBefore, contextAfter, includeContext }
-      : { userPrompt: prompt, contextBefore, contextAfter, includeContext };
-    inlineAi.run({ action, params, range: { from, to } });
-    setInlineAiRequest(null);
-    editorRef.current?.focus();
-  }, [inlineAi, inlineAiRequest]);
 
   const writeNow = useCallback(async () => {
     const path = dirtyPathRef.current;
@@ -207,18 +178,12 @@ export default function App() {
     if (dirtyPathRef.current === null) setSaveState(SAVE_STATES.SAVED);
   }, [linkIndex]);
 
-  const flushAndCancel = useCallback(async () => {
-    inlineAiRef.current?.cancel();
-    setInlineAiRequest(null);
-    await writeNow();
-  }, [writeNow]);
-
   // ---- tabs (drafts live here) ----
   const onAfterSwitch = useCallback(() => {
     if (graphMode) setGraphMode(false);
   }, [graphMode]);
 
-  const tabsApi = useTabs({ editorRef, writeNow: flushAndCancel, onAfterSwitch });
+  const tabsApi = useTabs({ editorRef, writeNow, onAfterSwitch });
   const { activeFile, activeIsDraft, activeTab, openInActiveTab, openInNewTab, addDraftTab,
           switchTab, closeTab, closeTabsForPath, closeTabsUnderPath, renameTabsPath, resetTabs,
           promoteDraft, tabs, activeTabId, goBack, goForward, canGoBack, canGoForward } = tabsApi;
@@ -237,6 +202,28 @@ export default function App() {
     if (activeFile) return dirOf(activeFile);
     return workspacePath;
   }, [selectedFolderPath, activeFile, workspacePath]);
+
+  // Resolve an absolute file path for write-side image operations. If the
+  // active tab is a draft, promote it on the spot (same flow as the keystroke
+  // promotion in onEditorChange) so the dropped image has a real folder to
+  // land in. Returns null when there's no active tab.
+  const ensureActiveFilePath = useCallback(async () => {
+    if (!activeTab) return null;
+    if (!activeTab.isDraft) return activeFile;
+    const editor = editorRef.current;
+    const currentText = editor?.getText() ?? '';
+    const newPath = await promoteDraft(activeTab.id, newFileDir(), {
+      name: titleDraft || 'Untitled',
+      initialContent: '',
+    });
+    linkIndex.updateFile(newPath, currentText);
+    // Mark dirty so the buffer (which may have unsaved typing alongside the
+    // image drop) gets flushed by the next writeNow tick.
+    dirtyPathRef.current = newPath;
+    return newPath;
+  }, [activeTab, activeFile, promoteDraft, newFileDir, titleDraft, linkIndex]);
+  const ensureActiveFilePathRef = useRef(ensureActiveFilePath);
+  useEffect(() => { ensureActiveFilePathRef.current = ensureActiveFilePath; }, [ensureActiveFilePath]);
 
   // ---- on editor change: schedule debounced save; promote drafts ----
   const onEditorChange = useCallback(() => {
@@ -314,9 +301,12 @@ export default function App() {
     await window.api.settings.write({
       workspaces: next.workspaces,
       activeWorkspaceId: next.activeWorkspaceId,
-      appearance: { themeMode: next.themeMode },
-      ai: next.ai,
+      appearance: {
+        themeMode: next.themeMode,
+        hideLineNumbers: next.hideLineNumbers ?? hideLineNumbersRef.current,
+      },
       codingAgent: next.codingAgent ?? codingAgentSettingsRef.current,
+      agentSecrets: next.agentSecrets ?? agentSecretsRef.current,
       sidebarWidth: next.sidebarWidth ?? sidebarWidthRef.current,
       viewMode: next.viewMode ?? viewModeRef.current,
       chatSidebarOpen: next.chatSidebarOpen ?? chatSidebarOpenRef.current,
@@ -326,11 +316,11 @@ export default function App() {
 
   const persistSidebarWidth = useCallback(async (width) => {
     sidebarWidthRef.current = width;
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings, sidebarWidth: width });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, sidebarWidth: width });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const loadWorkspace = useCallback(async (workspace) => {
-    await flushAndCancel();
+    await writeNow();
     await window.api.watchStop();
     resetTabs();
     setTree([]);
@@ -344,7 +334,7 @@ export default function App() {
     setTree(treeData);
     linkIndex.rebuild(files);
     await window.api.watchStart(workspace.path);
-  }, [flushAndCancel, resetTabs, linkIndex]);
+  }, [writeNow, resetTabs, linkIndex]);
 
   const switchWorkspace = useCallback(async (id) => {
     const ws = workspaces.find((w) => w.id === id);
@@ -354,14 +344,14 @@ export default function App() {
       const removed = workspaces.filter((w) => w.id !== id);
       setWorkspaces(removed);
       setActiveWorkspaceId(null);
-      await persistSettings({ workspaces: removed, activeWorkspaceId: null, themeMode, ai: aiSettings });
+      await persistSettings({ workspaces: removed, activeWorkspaceId: null, themeMode });
       showError(`Workspace "${ws.name}" no longer exists.`);
       return;
     }
     setActiveWorkspaceId(id);
-    await persistSettings({ workspaces, activeWorkspaceId: id, themeMode, ai: aiSettings });
+    await persistSettings({ workspaces, activeWorkspaceId: id, themeMode });
     await loadWorkspace(ws);
-  }, [workspaces, persistSettings, themeMode, aiSettings, loadWorkspace, showError]);
+  }, [workspaces, persistSettings, themeMode, loadWorkspace, showError]);
 
   const addWorkspace = useCallback(async () => {
     const folder = await window.api.openFolder();
@@ -375,9 +365,9 @@ export default function App() {
     const next = [...workspaces, ws];
     setWorkspaces(next);
     setActiveWorkspaceId(ws.id);
-    await persistSettings({ workspaces: next, activeWorkspaceId: ws.id, themeMode, ai: aiSettings });
+    await persistSettings({ workspaces: next, activeWorkspaceId: ws.id, themeMode });
     await loadWorkspace(ws);
-  }, [workspaces, persistSettings, themeMode, aiSettings, loadWorkspace, switchWorkspace]);
+  }, [workspaces, persistSettings, themeMode, loadWorkspace, switchWorkspace]);
 
   const removeWorkspace = useCallback(async (id) => {
     const next = workspaces.filter((w) => w.id !== id);
@@ -391,30 +381,37 @@ export default function App() {
       setSelectedFolderPath(null);
       await window.api.watchStop();
     }
-    await persistSettings({ workspaces: next, activeWorkspaceId: newActive, themeMode, ai: aiSettings });
-  }, [workspaces, activeWorkspaceId, persistSettings, themeMode, aiSettings, resetTabs]);
+    await persistSettings({ workspaces: next, activeWorkspaceId: newActive, themeMode });
+  }, [workspaces, activeWorkspaceId, persistSettings, themeMode, resetTabs]);
 
   const onThemeModeChange = useCallback(async (mode) => {
     setThemeMode(mode);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode: mode, ai: aiSettings });
-  }, [persistSettings, workspaces, activeWorkspaceId, aiSettings]);
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode: mode });
+  }, [persistSettings, workspaces, activeWorkspaceId]);
+
+  const onHideLineNumbersChange = useCallback(async (next) => {
+    setHideLineNumbers(next);
+    hideLineNumbersRef.current = next;
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, hideLineNumbers: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const onToggleViewMode = useCallback(async () => {
     const next = viewMode === VIEW_MODES.LIVE ? VIEW_MODES.RAW : VIEW_MODES.LIVE;
     setViewMode(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings, viewMode: next });
-  }, [viewMode, persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
-
-  const onAiChange = useCallback(async (next) => {
-    setAiSettings(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, viewMode: next });
+  }, [viewMode, persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const onCodingAgentChange = useCallback(async (next) => {
     setCodingAgentSettings(next);
     codingAgentSettingsRef.current = next;
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings, codingAgent: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, codingAgent: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  const onAgentSecretsChange = useCallback(async (next) => {
+    setAgentSecrets(next);
+    agentSecretsRef.current = next;
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, agentSecrets: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   // ---- title commit (rename existing or promote draft) ----
   const onTitleCommit = useCallback(async (newName) => {
@@ -440,9 +437,9 @@ export default function App() {
 
   // ---- graph toggle ----
   const onToggleGraph = useCallback(async () => {
-    await flushAndCancel();
+    await writeNow();
     setGraphMode((g) => !g);
-  }, [flushAndCancel]);
+  }, [writeNow]);
 
   // ---- new file (thin sidebar) ----
   const onNewFile = useCallback(async () => {
@@ -628,10 +625,10 @@ export default function App() {
 
   // ---- beforeunload save ----
   useEffect(() => {
-    const flush = () => { flushAndCancel(); };
+    const flush = () => { writeNow(); };
     window.addEventListener('beforeunload', flush);
     return () => window.removeEventListener('beforeunload', flush);
-  }, [flushAndCancel]);
+  }, [writeNow]);
 
   // ---- external file change subscription ----
   //
@@ -664,6 +661,12 @@ export default function App() {
   useEffect(() => { renameTabsPathRef.current = renameTabsPath; }, [renameTabsPath]);
   const showErrorRef = useRef(showError);
   useEffect(() => { showErrorRef.current = showError; }, [showError]);
+  // Watcher reads activeFile via this ref so the subscription doesn't retear
+  // every time the user switches tabs.
+  const activeFileRef = useRef(activeFile);
+  useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
+  const activeIsDraftRef = useRef(activeIsDraft);
+  useEffect(() => { activeIsDraftRef.current = activeIsDraft; }, [activeIsDraft]);
 
   useEffect(() => {
     if (!workspacePath) return undefined;
@@ -726,8 +729,36 @@ export default function App() {
       }
       // 'add' | 'change'
       const stored = li.linkIndexRef.current.getMtime(evt.path);
-      if (stored == null || evt.mtime > stored) {
+      const isFresh = stored == null || evt.mtime > stored;
+      if (isFresh) {
         li.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
+      }
+      // If the changed file is the open tab, reload the buffer from disk and
+      // flash the added text green. Skipping the freshness check here means a
+      // self-echo (renderer just wrote) is ignored — the stored mtime gate
+      // above already filtered for that.
+      if (
+        evt.type === 'change' &&
+        isFresh &&
+        evt.path === activeFileRef.current &&
+        !activeIsDraftRef.current
+      ) {
+        (async () => {
+          try {
+            const editor = editorRef.current;
+            if (!editor) return;
+            const oldText = editor.getText();
+            const newText = await window.api.readFile(evt.path);
+            if (oldText === newText) return;
+            const viewState = editor.getViewState();
+            editor.setContent(newText, viewState);
+            const changes = diffWordsWithSpace(oldText, newText);
+            const ranges = rangesAddedFromDiff(changes);
+            if (ranges.length > 0) editor.flashRanges(ranges);
+          } catch (err) {
+            // File may have been deleted or moved before we could read it.
+          }
+        })();
       }
       if (evt.type === 'add') scheduleRefresh();
     });
@@ -749,11 +780,17 @@ export default function App() {
       if (!active) return;
       setSystemPrefersDark(!!initialTheme.dark);
       setThemeMode(settings.appearance?.themeMode || THEME_MODES.SYSTEM);
+      const hide = !!settings.appearance?.hideLineNumbers;
+      setHideLineNumbers(hide);
+      hideLineNumbersRef.current = hide;
       setWorkspaces(settings.workspaces || []);
-      if (settings.ai) setAiSettings(settings.ai);
       if (settings.codingAgent) {
         setCodingAgentSettings(settings.codingAgent);
         codingAgentSettingsRef.current = settings.codingAgent;
+      }
+      if (Array.isArray(settings.agentSecrets)) {
+        setAgentSecrets(settings.agentSecrets);
+        agentSecretsRef.current = settings.agentSecrets;
       }
       if (typeof settings.sidebarWidth === 'number') {
         setSidebarWidth(settings.sidebarWidth);
@@ -788,7 +825,6 @@ export default function App() {
               workspaces: next,
               activeWorkspaceId: null,
               appearance: settings.appearance ?? { themeMode: THEME_MODES.SYSTEM },
-              ai: settings.ai,
             });
             showError(`Workspace "${ws.name}" no longer exists at ${ws.path}.`);
           }
@@ -885,8 +921,8 @@ export default function App() {
   }, [persistSidebarWidth]);
 
   const persistChatSidebar = useCallback(async () => {
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, ai: aiSettings });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode, aiSettings]);
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const toggleChatSidebar = useCallback(() => {
     setChatSidebarOpen((prev) => {
@@ -896,6 +932,67 @@ export default function App() {
       return next;
     });
   }, [persistChatSidebar]);
+
+  // Build the framing snippet that gets dropped into the chat composer when
+  // the user picks "Send to Agent" from the editor context menu. Path is
+  // workspace-relative; selected text is fenced with ~~~ to avoid colliding
+  // with code blocks inside it. Trailing newline puts the caret on a blank
+  // line so the user can start typing their request.
+  const buildSendToAgentSnippet = useCallback((payload) => {
+    if (!workspacePath || !payload?.relPath) return '';
+    const { relPath } = payload;
+    if (payload.hasSelection) {
+      return (
+        `I've copied the selected text below from ${relPath} at line ${payload.fromLine}, column ${payload.fromCol} to line ${payload.toLine}, column ${payload.toCol}:\n\n` +
+        `~~~\n${payload.selection}\n~~~\n\n`
+      );
+    }
+    return `My cursor is at line ${payload.line}, column ${payload.col} in ${relPath}.\n\n`;
+  }, [workspacePath]);
+
+  const applySendToAgent = useCallback((snippet, { append }) => {
+    if (!chatSidebarOpenRef.current) {
+      chatSidebarOpenRef.current = true;
+      setChatSidebarOpen(true);
+      persistChatSidebar();
+    }
+    // Either fires immediately (sidebar already open + ref attached) or once
+    // the mount completes and the callback ref flips chatSidebarReady to true.
+    setPendingComposerInjection({ text: snippet, append });
+  }, [persistChatSidebar]);
+
+  // Drain a pending composer injection once the sidebar's ref is attached.
+  useEffect(() => {
+    if (!chatSidebarReady || !pendingComposerInjection) return;
+    const { text, append } = pendingComposerInjection;
+    chatSidebarRef.current?.setComposerText(text, { append });
+    requestAnimationFrame(() => chatSidebarRef.current?.focusComposer());
+    setPendingComposerInjection(null);
+  }, [chatSidebarReady, pendingComposerInjection]);
+
+  const onSendToAgent = useCallback((info) => {
+    if (!workspacePath || !activeFile) return;
+    // Prefix the workspace-relative path with `[cwd]/` so the agent reads it
+    // as "relative to your cwd" (which pi sets to the active workspace). Root
+    // files still get the prefix so the snippet shape is uniform.
+    let rel = activeFile;
+    if (activeFile.startsWith(workspacePath)) {
+      rel = activeFile.slice(workspacePath.length).replace(/^\/+/, '');
+    }
+    const relPath = `[cwd]/${rel}`;
+    const snippet = buildSendToAgentSnippet({ ...info, relPath });
+    if (!snippet) return;
+    // Sidebar closed → composer guaranteed empty (component is unmounted), no
+    // need to prompt. Sidebar open → ask before clobbering existing text.
+    if (chatSidebarOpenRef.current) {
+      const existing = chatSidebarRef.current?.getComposerText?.() ?? '';
+      if (existing.trim()) {
+        setSendToAgentPending(snippet);
+        return;
+      }
+    }
+    applySendToAgent(snippet, { append: false });
+  }, [workspacePath, activeFile, buildSendToAgentSnippet, applySendToAgent]);
 
   const onChatSidebarResizeStart = useCallback((e) => {
     e.preventDefault();
@@ -1026,10 +1123,12 @@ export default function App() {
                   getActiveFilePathRef={activeFilePathRef}
                   onImageError={showError}
                   onRequestUrl={requestUrl}
-                  onAskAgent={onInlineAiTrigger}
+                  onSendToAgent={onSendToAgent}
+                  ensureActiveFilePathRef={ensureActiveFilePathRef}
                   onStats={setEditorStats}
                   dark={isDark}
                   viewMode={viewMode}
+                  hideLineNumbers={hideLineNumbers}
                 />
               </div>
               {activeTab ? (
@@ -1071,7 +1170,7 @@ export default function App() {
             className="chat-sidebar-resize-handle"
             onMouseDown={onChatSidebarResizeStart}
           />
-          <ChatSidebar onClose={toggleChatSidebar} workspacePath={workspacePath} />
+          <ChatSidebar ref={setChatSidebarRef} onClose={toggleChatSidebar} workspacePath={workspacePath} />
         </aside>
       ) : (
         <button
@@ -1109,20 +1208,40 @@ export default function App() {
         <UrlPromptModal onSubmit={handleUrlSubmit} onCancel={handleUrlCancel} />
       )}
 
-      <ErrorDialog
-        open={!!aiError}
-        message={aiError}
-        title="AI request failed"
-        onClose={() => setAiError(null)}
-      />
-
-      <InlineAiModal
-        open={!!inlineAiRequest}
-        action={inlineAiRequest?.action}
-        defaultIncludeContext={!!aiSettings.includeContextByDefault}
-        onSubmit={onInlineAiSubmit}
-        onCancel={onInlineAiCancel}
-      />
+      <Dialog
+        open={!!sendToAgentPending}
+        onClose={() => setSendToAgentPending(null)}
+        title="Send to Agent"
+        footer={
+          <>
+            <button className="dialog-button" onClick={() => setSendToAgentPending(null)}>
+              Cancel
+            </button>
+            <button
+              className="dialog-button"
+              onClick={() => {
+                const s = sendToAgentPending;
+                setSendToAgentPending(null);
+                if (s) applySendToAgent(s, { append: true });
+              }}
+            >
+              Append
+            </button>
+            <button
+              className="dialog-button dialog-button-primary"
+              onClick={() => {
+                const s = sendToAgentPending;
+                setSendToAgentPending(null);
+                if (s) applySendToAgent(s, { append: false });
+              }}
+            >
+              Replace
+            </button>
+          </>
+        }
+      >
+        The chat composer already has text. Replace it with the selection, or append to it?
+      </Dialog>
 
       {settingsOpen && (
         <SettingsModal
@@ -1135,10 +1254,12 @@ export default function App() {
           onRemoveWorkspace={removeWorkspace}
           themeMode={themeMode}
           onThemeModeChange={onThemeModeChange}
-          ai={aiSettings}
-          onAiChange={onAiChange}
+          hideLineNumbers={hideLineNumbers}
+          onHideLineNumbersChange={onHideLineNumbersChange}
           codingAgent={codingAgentSettings}
           onCodingAgentChange={onCodingAgentChange}
+          agentSecrets={agentSecrets}
+          onAgentSecretsChange={onAgentSecretsChange}
         />
       )}
     </div>

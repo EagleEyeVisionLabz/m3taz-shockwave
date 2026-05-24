@@ -1,9 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 
-// Tri-state value used both for the global toggle ('enabled' | 'disabled') and
-// for per-workspace override ('inherit' | 'enabled' | 'disabled').
 const GLOBAL_STATES = ['enabled', 'disabled'];
-const WORKSPACE_STATES = ['inherit', 'enabled', 'disabled'];
 
 function StateButtons({ states, value, onChange, ariaLabel }) {
   return (
@@ -24,7 +21,23 @@ function StateButtons({ states, value, onChange, ariaLabel }) {
   );
 }
 
-export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId }) {
+// Show only the first sentence. If the description has no period, cap at
+// MAX_DESC_CHARS so a paragraph-long blob doesn't blow up the row height.
+const MAX_DESC_CHARS = 120;
+function shortDescription(text) {
+  if (!text) return '';
+  const periodIdx = text.indexOf('.');
+  if (periodIdx >= 0) {
+    const sentence = text.slice(0, periodIdx + 1);
+    return text.length > sentence.length ? `${sentence} …` : sentence;
+  }
+  if (text.length > MAX_DESC_CHARS) {
+    return `${text.slice(0, MAX_DESC_CHARS).trimEnd()} …`;
+  }
+  return text;
+}
+
+export default function AiSkillsTab({ skills, onSkillsChange }) {
   const [installed, setInstalled] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -45,32 +58,25 @@ export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId 
   useEffect(() => { reload(); }, [reload]);
 
   const globalState = skills?.global ?? {};
-  const wsOverrides = (activeWorkspaceId && skills?.workspaces?.[activeWorkspaceId]) || {};
 
   const setGlobal = useCallback((folderName, value) => {
     const nextGlobal = { ...globalState, [folderName]: value };
     onSkillsChange({ ...skills, global: nextGlobal });
   }, [skills, globalState, onSkillsChange]);
 
-  const setWorkspaceOverride = useCallback((folderName, value) => {
-    if (!activeWorkspaceId) return;
-    const currentWs = skills?.workspaces?.[activeWorkspaceId] ?? {};
-    const nextWs = { ...currentWs };
-    if (value === 'inherit') delete nextWs[folderName];
-    else nextWs[folderName] = value;
-    const nextWorkspaces = { ...(skills?.workspaces ?? {}), [activeWorkspaceId]: nextWs };
-    onSkillsChange({ ...skills, workspaces: nextWorkspaces });
-  }, [skills, activeWorkspaceId, onSkillsChange]);
-
   const onImportClick = useCallback(async () => {
     setError(null);
     try {
-      const result = await window.api.skills.importPicker();
-      if (result) await reload();
+      const destPath = await window.api.skills.importPicker();
+      if (destPath) {
+        const folderName = destPath.split(/[\\/]/).pop();
+        onSkillsChange({ ...skills, global: { ...globalState, [folderName]: 'enabled' } });
+        await reload();
+      }
     } catch (err) {
       setError(err?.message ?? String(err));
     }
-  }, [reload]);
+  }, [reload, skills, globalState, onSkillsChange]);
 
   const onRemove = useCallback(async (skill) => {
     setError(null);
@@ -98,7 +104,7 @@ export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId 
     setError(null);
     const files = e.dataTransfer?.files;
     if (!files || files.length === 0) return;
-    let importedAny = false;
+    const importedFolders = [];
     for (const file of files) {
       const srcPath = window.api.skills.pathForFile(file);
       if (!srcPath) {
@@ -106,23 +112,28 @@ export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId 
         continue;
       }
       try {
-        await window.api.skills.importFromPath(srcPath);
-        importedAny = true;
+        const destPath = await window.api.skills.importFromPath(srcPath);
+        if (destPath) importedFolders.push(destPath.split(/[\\/]/).pop());
       } catch (err) {
         setError(err?.message ?? String(err));
       }
     }
-    if (importedAny) await reload();
-  }, [reload]);
+    if (importedFolders.length > 0) {
+      const nextGlobal = { ...globalState };
+      for (const fn of importedFolders) nextGlobal[fn] = 'enabled';
+      onSkillsChange({ ...skills, global: nextGlobal });
+      await reload();
+    }
+  }, [reload, skills, globalState, onSkillsChange]);
 
   return (
     <div>
-      <p className="settings-field-hint" style={{ marginTop: 0 }}>
-        Skills are reusable instructions the AI Agent loads on demand. Drop a folder containing a
-        SKILL.md (with <code>name</code> and <code>description</code> in frontmatter) onto the
-        area below, or use the picker.
+      <p className="settings-tab-intro">
+        Skills are reusable instructions the Agent loads on demand. Global state below sets the
+        default; per-workspace overrides live in the Workspace Skills tab.
       </p>
 
+      <h3 className="settings-subsection-title">Add a skill</h3>
       <div
         className={`skill-dropzone ${dragOver ? 'over' : ''}`}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -146,7 +157,6 @@ export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId 
         <ul className="skill-list">
           {installed.map((skill) => {
             const gValue = globalState[skill.folderName] ?? 'disabled';
-            const wValue = wsOverrides[skill.folderName] ?? 'inherit';
             return (
               <li key={skill.folderName} className={`skill-row ${skill.hasSkillMd ? '' : 'broken'}`}>
                 <div className="skill-info">
@@ -154,30 +164,20 @@ export default function AiSkillsTab({ skills, onSkillsChange, activeWorkspaceId 
                     {skill.name}
                     {!skill.hasSkillMd && <span className="skill-broken-badge">no SKILL.md</span>}
                   </div>
-                  {skill.description && <div className="skill-description">{skill.description}</div>}
+                  {skill.description && (
+                    <div className="skill-description" title={skill.description}>
+                      {shortDescription(skill.description)}
+                    </div>
+                  )}
                   <div className="skill-folder">{skill.folderName}</div>
                 </div>
                 <div className="skill-controls">
-                  <div className="skill-control">
-                    <div className="skill-control-label">Global</div>
-                    <StateButtons
-                      states={GLOBAL_STATES}
-                      value={gValue}
-                      onChange={(v) => setGlobal(skill.folderName, v)}
-                      ariaLabel={`Global state for ${skill.name}`}
-                    />
-                  </div>
-                  <div className="skill-control">
-                    <div className="skill-control-label">
-                      Workspace{!activeWorkspaceId && ' (none open)'}
-                    </div>
-                    <StateButtons
-                      states={WORKSPACE_STATES}
-                      value={activeWorkspaceId ? wValue : 'inherit'}
-                      onChange={(v) => setWorkspaceOverride(skill.folderName, v)}
-                      ariaLabel={`Workspace override for ${skill.name}`}
-                    />
-                  </div>
+                  <StateButtons
+                    states={GLOBAL_STATES}
+                    value={gValue}
+                    onChange={(v) => setGlobal(skill.folderName, v)}
+                    ariaLabel={`Global state for ${skill.name}`}
+                  />
                   <button
                     type="button"
                     className="skill-remove-button"

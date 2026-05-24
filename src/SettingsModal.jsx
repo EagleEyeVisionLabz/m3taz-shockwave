@@ -2,13 +2,26 @@ import React, { useEffect, useState } from 'react';
 import { SETTINGS_SECTIONS } from './constants.js';
 import WorkspacesSection from './settings/WorkspacesSection.jsx';
 import AppearanceSection from './settings/AppearanceSection.jsx';
-import AiSection from './settings/AiSection.jsx';
+import AgentLlmSection from './settings/AgentLlmSection.jsx';
+import AiSkillsTab from './settings/AiSkillsTab.jsx';
+import WorkspaceSkillsTab from './settings/WorkspaceSkillsTab.jsx';
+import AgentSecretsSection from './settings/AgentSecretsSection.jsx';
 
-const SECTIONS = [
-  { id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
-  { id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
-  { id: SETTINGS_SECTIONS.AI, label: 'LLM / Agent' },
+// Sidebar layout: section headers group related items. Header rows are
+// non-interactive labels; item rows are the actual nav buttons. To add a new
+// page, drop a new { kind: 'item', id, label } row under the relevant header.
+const NAV = [
+  { kind: 'header', label: 'General' },
+  { kind: 'item', id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
+  { kind: 'item', id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
+  { kind: 'header', label: 'AI' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'LLM' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SKILLS, label: 'Global Skills' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_WORKSPACE_SKILLS, label: 'Workspace Skills' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SECRETS, label: 'API Secrets' },
 ];
+
+const DEFAULT_SECTION = SETTINGS_SECTIONS.APPEARANCE;
 
 export default function SettingsModal({
   initialSection,
@@ -20,12 +33,14 @@ export default function SettingsModal({
   onRemoveWorkspace,
   themeMode,
   onThemeModeChange,
-  ai,
-  onAiChange,
+  hideLineNumbers,
+  onHideLineNumbersChange,
   codingAgent,
   onCodingAgentChange,
+  agentSecrets,
+  onAgentSecretsChange,
 }) {
-  const [active, setActive] = useState(initialSection || SECTIONS[0].id);
+  const [active, setActive] = useState(initialSection || DEFAULT_SECTION);
 
   useEffect(() => {
     const onKey = (e) => {
@@ -35,23 +50,45 @@ export default function SettingsModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
+  const caSkills = codingAgent?.skills ?? { global: {}, workspaces: {} };
+  const onSkillsChange = (nextSkills) => onCodingAgentChange?.({
+    provider: codingAgent?.provider,
+    model: codingAgent?.model,
+    apiKey: codingAgent?.apiKey,
+    skills: nextSkills,
+  });
+
   return (
     <div className="settings-backdrop" onClick={onClose}>
       <div className="settings-modal" onClick={(e) => e.stopPropagation()}>
         <button className="settings-close" onClick={onClose} aria-label="Close settings">×</button>
         <nav className="settings-nav">
-          <div className="settings-nav-header">Options</div>
-          {SECTIONS.map((s) => (
-            <button
-              key={s.id}
-              className={`settings-nav-item ${active === s.id ? 'active' : ''}`}
-              onClick={() => setActive(s.id)}
-            >
-              {s.label}
-            </button>
-          ))}
+          {NAV.map((row, idx) => {
+            if (row.kind === 'header') {
+              return (
+                <div key={`h-${idx}`} className="settings-nav-header">{row.label}</div>
+              );
+            }
+            return (
+              <button
+                key={row.id}
+                className={`settings-nav-item ${active === row.id ? 'active' : ''}`}
+                onClick={() => setActive(row.id)}
+              >
+                {row.label}
+              </button>
+            );
+          })}
         </nav>
         <div className="settings-detail">
+          {active === SETTINGS_SECTIONS.APPEARANCE && (
+            <AppearanceSection
+              themeMode={themeMode}
+              onThemeModeChange={onThemeModeChange}
+              hideLineNumbers={hideLineNumbers}
+              onHideLineNumbersChange={onHideLineNumbersChange}
+            />
+          )}
           {active === SETTINGS_SECTIONS.WORKSPACES && (
             <WorkspacesSection
               workspaces={workspaces}
@@ -61,19 +98,33 @@ export default function SettingsModal({
               onRemove={onRemoveWorkspace}
             />
           )}
-          {active === SETTINGS_SECTIONS.APPEARANCE && (
-            <AppearanceSection
-              themeMode={themeMode}
-              onChange={onThemeModeChange}
-            />
-          )}
-          {active === SETTINGS_SECTIONS.AI && (
-            <AiSection
-              ai={ai}
-              onChange={onAiChange}
+          {active === SETTINGS_SECTIONS.AGENT_LLM && (
+            <AgentLlmSection
               codingAgent={codingAgent}
               onCodingAgentChange={onCodingAgentChange}
-              activeWorkspaceId={activeWorkspaceId}
+            />
+          )}
+          {active === SETTINGS_SECTIONS.AGENT_SKILLS && (
+            <div className="settings-section">
+              <h2 className="settings-section-title">Global Skills</h2>
+              <AiSkillsTab skills={caSkills} onSkillsChange={onSkillsChange} />
+            </div>
+          )}
+          {active === SETTINGS_SECTIONS.AGENT_WORKSPACE_SKILLS && (
+            <div className="settings-section">
+              <h2 className="settings-section-title">Workspace Skills</h2>
+              <WorkspaceSkillsTab
+                skills={caSkills}
+                onSkillsChange={onSkillsChange}
+                workspaces={workspaces}
+                activeWorkspaceId={activeWorkspaceId}
+              />
+            </div>
+          )}
+          {active === SETTINGS_SECTIONS.AGENT_SECRETS && (
+            <AgentSecretsSection
+              secrets={agentSecrets ?? []}
+              onChange={onAgentSecretsChange}
             />
           )}
         </div>

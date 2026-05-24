@@ -23,20 +23,16 @@ export const FOLDER_ACTIONS = Object.freeze({
 export const EDITOR_ACTIONS = Object.freeze({
   ADD_LINK: 'addLink',
   ADD_EXTERNAL_LINK: 'addExternalLink',
-  INLINE_AI: 'inlineAi',
-});
-
-// Inline AI action ids dispatched to the main process. Must match
-// electron/aiActions.js ACTIONS keys.
-export const AI_ACTIONS = Object.freeze({
-  INSERT: 'insert',
-  REWRITE: 'rewrite',
+  SEND_TO_AGENT: 'sendToAgent',
 });
 
 export const SETTINGS_SECTIONS = Object.freeze({
-  WORKSPACES: 'workspaces',
   APPEARANCE: 'appearance',
-  AI: 'ai',
+  WORKSPACES: 'workspaces',
+  AGENT_LLM: 'agent-llm',
+  AGENT_SKILLS: 'agent-skills',
+  AGENT_WORKSPACE_SKILLS: 'agent-workspace-skills',
+  AGENT_SECRETS: 'agent-secrets',
 });
 
 export const AI_PROVIDERS = Object.freeze({

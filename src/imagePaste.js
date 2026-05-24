@@ -4,8 +4,9 @@
 // the active .md (via window.api.writeImage), and inserts a markdown image
 // reference `![](filename)` at the cursor. Multiple images are concatenated.
 //
-// Drafts: rejected with an error — we need a saved file path to know where
-// to put the image. The user has to save the file first.
+// Drafts: promoted on the spot via `ensureActiveFilePath` (same flow as the
+// keystroke-promotion in App.jsx onEditorChange). The draft turns into a real
+// file under the workspace and the image lands next to it.
 //
 // Filename strategy:
 //   - Pasted screenshots arrive with no name → use timestamp ("Pasted image …").
@@ -48,8 +49,16 @@ function encodeMarkdownUrl(name) {
   return encodeURI(name).replace(/\(/g, '%28').replace(/\)/g, '%29');
 }
 
-async function handleImageFiles(view, files, { getActiveFilePath, onError }) {
-  const activePath = getActiveFilePath?.();
+async function handleImageFiles(view, files, { getActiveFilePath, ensureActiveFilePath, onError }) {
+  let activePath = getActiveFilePath?.();
+  if (!activePath && ensureActiveFilePath) {
+    try {
+      activePath = await ensureActiveFilePath();
+    } catch (err) {
+      onError?.(err?.message ?? String(err));
+      return;
+    }
+  }
   if (!activePath) {
     onError?.('Save this file before adding images.');
     return;
@@ -131,8 +140,16 @@ function posixRelative(fromDir, toPath) {
   return [...up, ...down].join('/');
 }
 
-function insertSidebarImage(view, srcAbsPath, { getActiveFilePath, onError }) {
-  const activePath = getActiveFilePath?.();
+async function insertSidebarImage(view, srcAbsPath, { getActiveFilePath, ensureActiveFilePath, onError }) {
+  let activePath = getActiveFilePath?.();
+  if (!activePath && ensureActiveFilePath) {
+    try {
+      activePath = await ensureActiveFilePath();
+    } catch (err) {
+      onError?.(err?.message ?? String(err));
+      return;
+    }
+  }
   if (!activePath) {
     onError?.('Open a file before adding images.');
     return;
@@ -160,18 +177,18 @@ function insertSidebarImage(view, srcAbsPath, { getActiveFilePath, onError }) {
 // native file drags. That fires before CM6's bubble-phase listener, so any
 // `drop` registered via domEventHandlers never runs. Marijn (CM6 author)
 // recommends a direct addEventListener for this exact case.
-const pasteHandler = ({ getActiveFilePath, onError }) =>
+const pasteHandler = ({ getActiveFilePath, ensureActiveFilePath, onError }) =>
   EditorView.domEventHandlers({
     paste(e, view) {
       const images = pickImageFiles(e.clipboardData?.files);
       if (images.length === 0) return false;
       e.preventDefault();
-      handleImageFiles(view, images, { getActiveFilePath, onError });
+      handleImageFiles(view, images, { getActiveFilePath, ensureActiveFilePath, onError });
       return true;
     },
   });
 
-const dropPlugin = ({ getActiveFilePath, onError }) =>
+const dropPlugin = ({ getActiveFilePath, ensureActiveFilePath, onError }) =>
   ViewPlugin.define((view) => {
     const onDragOver = (e) => {
       const sidebar = isSidebarImageDrag();
@@ -188,7 +205,7 @@ const dropPlugin = ({ getActiveFilePath, onError }) =>
         pendingSidebarImagePath = null;
         e.preventDefault();
         e.stopImmediatePropagation();
-        insertSidebarImage(view, srcPath, { getActiveFilePath, onError });
+        insertSidebarImage(view, srcPath, { getActiveFilePath, ensureActiveFilePath, onError });
         return;
       }
       const images = pickImageFiles(e.dataTransfer?.files);
@@ -197,7 +214,7 @@ const dropPlugin = ({ getActiveFilePath, onError }) =>
       // try to readAsText on image bytes and insert garbage) doesn't run.
       e.preventDefault();
       e.stopImmediatePropagation();
-      handleImageFiles(view, images, { getActiveFilePath, onError });
+      handleImageFiles(view, images, { getActiveFilePath, ensureActiveFilePath, onError });
     };
     view.contentDOM.addEventListener('dragover', onDragOver);
     view.contentDOM.addEventListener('drop', onDrop);

@@ -44,26 +44,6 @@ contextBridge.exposeInMainWorld('api', {
       return () => ipcRenderer.removeListener('theme:systemChanged', listener);
     },
   },
-  ai: {
-    run: (requestId, action, params) =>
-      ipcRenderer.invoke('ai:run', { requestId, action, params }),
-    cancel: (requestId) => ipcRenderer.invoke('ai:cancel', { requestId }),
-    onChunk: (cb) => {
-      const listener = (_evt, payload) => cb(payload);
-      ipcRenderer.on('ai:chunk', listener);
-      return () => ipcRenderer.removeListener('ai:chunk', listener);
-    },
-    onDone: (cb) => {
-      const listener = (_evt, payload) => cb(payload);
-      ipcRenderer.on('ai:done', listener);
-      return () => ipcRenderer.removeListener('ai:done', listener);
-    },
-    onError: (cb) => {
-      const listener = (_evt, payload) => cb(payload);
-      ipcRenderer.on('ai:error', listener);
-      return () => ipcRenderer.removeListener('ai:error', listener);
-    },
-  },
   skills: {
     list: () => ipcRenderer.invoke('skills:list'),
     libraryDir: () => ipcRenderer.invoke('skills:libraryDir'),
@@ -76,7 +56,7 @@ contextBridge.exposeInMainWorld('api', {
     pathForFile: (file) => webUtils.getPathForFile(file),
   },
   agent: {
-    send: (text) => ipcRenderer.invoke('agent:send', { text }),
+    send: (text, images) => ipcRenderer.invoke('agent:send', { text, images }),
     abort: () => ipcRenderer.invoke('agent:abort'),
     reset: () => ipcRenderer.invoke('agent:reset'),
     onEvent: (cb) => {

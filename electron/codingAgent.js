@@ -13,6 +13,7 @@
 import { createAgentSession, AuthStorage, ModelRegistry, SessionManager } from '@earendil-works/pi-coding-agent';
 import { getModel } from '@earendil-works/pi-ai';
 import { agentDirFor, ensureDirs, listInstalled, computeEffectivePaths, writePiSettings } from './skillLibrary.js';
+import { ensureAgentTokensExtension } from './agentTokensExtension.js';
 
 const state = {
   session: null,
@@ -45,7 +46,14 @@ async function ensureSession({ workspacePath, provider, model, apiKey, userDataD
   await ensureDirs(userDataDir);
   const installed = await listInstalled(userDataDir);
   const effectivePaths = computeEffectivePaths(installed, skillsState, workspaceId);
-  await writePiSettings(userDataDir, effectivePaths);
+  // Materialize the agent-tokens extension every boot so it always reflects
+  // the current source. Pi reads `extensions: []` from <agentDir>/settings.json
+  // to discover it.
+  const agentTokensPath = await ensureAgentTokensExtension(userDataDir);
+  await writePiSettings(userDataDir, {
+    skills: effectivePaths,
+    extensions: [agentTokensPath],
+  });
 
   if (state.session && state.key === key) return state.session;
   await teardown();
@@ -71,13 +79,52 @@ async function ensureSession({ workspacePath, provider, model, apiKey, userDataD
 }
 
 export async function agentSend(opts, emitEvent) {
-  const { text, workspacePath, provider, model, apiKey } = opts;
+  const { text, images, workspacePath, provider, model, apiKey } = opts;
   if (!workspacePath) throw new Error('Open a workspace first.');
   if (!provider) throw new Error('Coding agent provider not configured.');
   if (!model) throw new Error('Coding agent model not configured.');
   if (!apiKey) throw new Error('Coding agent API key not configured. Open Settings → LLM / Agent.');
-  const session = await ensureSession(opts, emitEvent);
-  await session.prompt(text);
+
+  // Wrap the renderer's event listener so we can intercept the failure
+  // assistant message that pi emits on a provider-side error (image too
+  // large, etc). Pi pushes the failed user msg into state.messages BEFORE
+  // the API call (see pi-agent-core/dist/agent-loop.js:42-52) and pushes
+  // the failure assistant after; both stay in context and re-poison every
+  // subsequent turn. We splice them out and tell the renderer to drop the
+  // matching transcript entries.
+  let lastFailureError = null;
+  const wrappedEmit = (event) => {
+    if (event?.type === 'agent_end' && Array.isArray(event.messages)) {
+      const failure = event.messages.find(
+        (m) => m?.role === 'assistant' && m?.stopReason === 'error' && m?.errorMessage,
+      );
+      if (failure) lastFailureError = failure.errorMessage;
+    }
+    emitEvent(event);
+  };
+
+  const session = await ensureSession(opts, wrappedEmit);
+  const hasImages = Array.isArray(images) && images.length > 0;
+  await session.prompt(text, hasImages ? { images } : undefined);
+
+  if (lastFailureError && hasImages) {
+    // Drop the failure assistant + the user message we just sent.
+    const msgs = session.state?.messages;
+    if (Array.isArray(msgs) && msgs.length >= 2) {
+      const last = msgs[msgs.length - 1];
+      const prev = msgs[msgs.length - 2];
+      if (
+        last?.role === 'assistant'
+        && last?.stopReason === 'error'
+        && prev?.role === 'user'
+      ) {
+        msgs.splice(msgs.length - 2, 2);
+      }
+    }
+    // Tell the renderer to drop the corresponding transcript entries so the
+    // UI matches pi's now-clean state.
+    emitEvent({ type: 'agent_send_failed', errorMessage: lastFailureError });
+  }
 }
 
 export async function agentAbort() {

@@ -14,14 +14,10 @@ import { wikiLinkCompletions } from './wikiCompletions.js';
 import { hideMarkdownMarkers } from './hideMarkdownMarkers.js';
 import { headingStyles } from './headingStyles.js';
 import { autoLinks } from './autoLinks.js';
+import { markdownLinks } from './markdownLinks.js';
 import { imagePaste } from './imagePaste.js';
 import { imageWidgets } from './imageWidgets.js';
-import {
-  streamingInsertExtension,
-  beginStreamInsert,
-  appendStreamChunk,
-  endStreamInsert,
-} from './streamingInsert.js';
+import { diffFlashExtension, flashRanges as flashRangesHelper } from './diffFlash.js';
 import { EDITOR_ACTIONS, VIEW_MODES } from './constants.js';
 
 function computeStats(state) {
@@ -50,18 +46,19 @@ function computeStats(state) {
  *   clear()                        — empties the doc, resets cursor
  */
 const Editor = forwardRef(function Editor(
-  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, getActiveFilePathRef, onImageError, onRequestUrl, onAskAgent, onStats, dark, viewMode },
+  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, getActiveFilePathRef, ensureActiveFilePathRef, onImageError, onRequestUrl, onSendToAgent, onStats, dark, viewMode, hideLineNumbers },
   ref,
 ) {
   const hostRef = useRef(null);
   const viewRef = useRef(null);
   const readOnlyCompartmentRef = useRef(null);
   const livePreviewCompartmentRef = useRef(null);
+  const lineNumbersCompartmentRef = useRef(null);
   const livePreviewExtensionsRef = useRef(null);
   const linkClickRef = useRef(onLinkClick);
   const changeRef = useRef(onChange);
   const requestUrlRef = useRef(onRequestUrl);
-  const askAgentRef = useRef(onAskAgent);
+  const sendToAgentRef = useRef(onSendToAgent);
   const imageErrorRef = useRef(onImageError);
   const statsRef = useRef(onStats);
   const statsRafRef = useRef(0);
@@ -70,7 +67,7 @@ const Editor = forwardRef(function Editor(
   useEffect(() => { linkClickRef.current = onLinkClick; }, [onLinkClick]);
   useEffect(() => { changeRef.current = onChange; }, [onChange]);
   useEffect(() => { requestUrlRef.current = onRequestUrl; }, [onRequestUrl]);
-  useEffect(() => { askAgentRef.current = onAskAgent; }, [onAskAgent]);
+  useEffect(() => { sendToAgentRef.current = onSendToAgent; }, [onSendToAgent]);
   useEffect(() => { imageErrorRef.current = onImageError; }, [onImageError]);
   useEffect(() => { statsRef.current = onStats; }, [onStats]);
 
@@ -85,13 +82,22 @@ const Editor = forwardRef(function Editor(
     view.dispatch({ effects: cmp.reconfigure(next) });
   }, [viewMode]);
 
+  // Toggle the line-numbers gutter without rebuilding the editor.
+  useEffect(() => {
+    const view = viewRef.current;
+    const cmp = lineNumbersCompartmentRef.current;
+    if (!view || !cmp) return;
+    view.dispatch({ effects: cmp.reconfigure(hideLineNumbers ? [] : lineNumbers()) });
+  }, [hideLineNumbers]);
+
   const handleContextMenu = async (e) => {
     e.preventDefault();
     const view = viewRef.current;
     if (!view) return;
-    const { from, to } = view.state.selection.main;
+    const { from, to, head } = view.state.selection.main;
     const hasSelection = from !== to;
-    const action = await window.api.showEditorContextMenu({ hasSelection });
+    const hasFilePath = !!(getActiveFilePathRef?.current);
+    const action = await window.api.showEditorContextMenu({ hasSelection, hasFilePath });
     if (!action) return;
     if (action === EDITOR_ACTIONS.ADD_LINK) {
       const selected = view.state.sliceDoc(from, to);
@@ -124,15 +130,27 @@ const Editor = forwardRef(function Editor(
       v2.focus();
       return;
     }
-    if (action === EDITOR_ACTIONS.INLINE_AI) {
-      // Capture range + selection text + surrounding context BEFORE the modal
-      // opens (focus leaves the editor). The parent owns the modal and the
-      // streaming dispatch.
-      const selection = view.state.sliceDoc(from, to);
-      const docText = view.state.doc.toString();
-      const contextBefore = docText.slice(0, from);
-      const contextAfter = docText.slice(to);
-      askAgentRef.current?.({ from, to, selection, contextBefore, contextAfter });
+    if (action === EDITOR_ACTIONS.SEND_TO_AGENT) {
+      const doc = view.state.doc;
+      if (hasSelection) {
+        const startLine = doc.lineAt(from);
+        const endLine = doc.lineAt(to);
+        sendToAgentRef.current?.({
+          hasSelection: true,
+          selection: view.state.sliceDoc(from, to),
+          fromLine: startLine.number,
+          fromCol: from - startLine.from + 1,
+          toLine: endLine.number,
+          toCol: to - endLine.from + 1,
+        });
+      } else {
+        const line = doc.lineAt(head);
+        sendToAgentRef.current?.({
+          hasSelection: false,
+          line: line.number,
+          col: head - line.from + 1,
+        });
+      }
     }
   };
 
@@ -178,20 +196,10 @@ const Editor = forwardRef(function Editor(
       view.dispatch({ selection: { anchor: 0 } });
       statsRef.current?.({ words: 0, chars: 0 });
     },
-    beginStream: (from, to) => {
-      const view = viewRef.current;
-      if (!view) return null;
-      return beginStreamInsert(view, from, to);
-    },
-    appendStream: (text) => {
+    flashRanges: (ranges) => {
       const view = viewRef.current;
       if (!view) return;
-      appendStreamChunk(view, text);
-    },
-    endStream: (completed) => {
-      const view = viewRef.current;
-      if (!view) return;
-      endStreamInsert(view, !!completed);
+      flashRangesHelper(view, ranges);
     },
     setReadOnly: (ro) => {
       const view = viewRef.current;
@@ -215,6 +223,9 @@ const Editor = forwardRef(function Editor(
     const livePreviewCompartment = new Compartment();
     livePreviewCompartmentRef.current = livePreviewCompartment;
 
+    const lineNumbersCompartment = new Compartment();
+    lineNumbersCompartmentRef.current = lineNumbersCompartment;
+
     // Decorations that turn the editor into a live preview. Toggling them off
     // (raw mode) shows the underlying markdown syntax. `markdown()` syntax
     // highlighting stays on either way so headings/code keep their colors.
@@ -223,6 +234,7 @@ const Editor = forwardRef(function Editor(
       headingStyles,
       hideMarkdownMarkers,
       autoLinks,
+      markdownLinks,
       taskCheckboxes,
       bulletPoints,
       imageWidgets(
@@ -240,8 +252,8 @@ const Editor = forwardRef(function Editor(
 
     const extensions = [
       readOnlyCompartment.of(EditorState.readOnly.of(false)),
-      streamingInsertExtension,
-      lineNumbers(),
+      diffFlashExtension,
+      lineNumbersCompartment.of(hideLineNumbers ? [] : lineNumbers()),
       highlightActiveLine(),
       history(),
       indentOnInput(),
@@ -258,6 +270,7 @@ const Editor = forwardRef(function Editor(
       livePreviewCompartment.of(initialLive),
       imagePaste({
         getActiveFilePath: () => getActiveFilePathRef?.current ?? null,
+        ensureActiveFilePath: () => ensureActiveFilePathRef?.current?.() ?? null,
         onError: (msg) => imageErrorRef.current?.(msg),
       }),
       autocompletion({
@@ -320,6 +333,7 @@ const Editor = forwardRef(function Editor(
       viewRef.current = null;
       readOnlyCompartmentRef.current = null;
       livePreviewCompartmentRef.current = null;
+      lineNumbersCompartmentRef.current = null;
       livePreviewExtensionsRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

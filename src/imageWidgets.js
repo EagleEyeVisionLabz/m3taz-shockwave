@@ -21,29 +21,65 @@ import {
   ViewPlugin,
   WidgetType,
 } from '@codemirror/view';
+import { syntaxTree } from '@codemirror/language';
 
 class ImageWidget extends WidgetType {
-  constructor(url, alt) {
+  constructor(url, alt, linkUrl) {
     super();
     this.url = url;
     this.alt = alt;
+    this.linkUrl = linkUrl || null;
   }
   eq(other) {
-    return other.url === this.url && other.alt === this.alt;
+    return other.url === this.url && other.alt === this.alt && other.linkUrl === this.linkUrl;
   }
   toDOM() {
     const wrap = document.createElement('span');
-    wrap.className = 'cm-image-embed';
+    wrap.className = this.linkUrl ? 'cm-image-embed cm-image-embed-linked' : 'cm-image-embed';
     const img = document.createElement('img');
     img.src = this.url;
     img.alt = this.alt || '';
     img.loading = 'lazy';
+    if (this.linkUrl) {
+      img.title = this.linkUrl;
+      // Swallow mousedown so CM doesn't place the cursor in the link range,
+      // which would trigger markdownLinks' cursor-aware reveal.
+      wrap.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      });
+      wrap.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.api.openExternal(this.linkUrl);
+      });
+    }
     wrap.appendChild(img);
     return wrap;
   }
-  ignoreEvent() {
-    return false;
+  ignoreEvent(event) {
+    // Let the widget receive its own mouse events so the link click handler runs.
+    return event.type !== 'mousedown' && event.type !== 'click';
   }
+}
+
+// Walk up from a position to find a wrapping Link node, and extract its URL.
+function findWrappingLinkUrl(state, pos) {
+  const tree = syntaxTree(state);
+  let node = tree.resolveInner(pos, 1);
+  while (node) {
+    if (node.name === 'Link') {
+      // Look for a URL child.
+      let c = node.firstChild;
+      while (c) {
+        if (c.name === 'URL') return state.doc.sliceString(c.from, c.to);
+        c = c.nextSibling;
+      }
+      return null;
+    }
+    node = node.parent;
+  }
+  return null;
 }
 
 function dirOf(filePath) {
@@ -82,14 +118,15 @@ export function imageWidgets(getActiveFilePath, getVaultPath) {
     // `![alt](url)` — alt may be empty, url disallows `)` and whitespace
     // (CommonMark spec); optional `"title"` after the url is stripped.
     regexp: /!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g,
-    decoration: (match) => {
+    decoration: (match, view, matchPos) => {
       const alt = match[1];
       const rawUrl = match[2];
       const activePath = getActiveFilePath();
       const vault = getVaultPath();
       const src = resolveImageUrl(rawUrl, dirOf(activePath || ''), vault);
       if (!src) return null;
-      return Decoration.replace({ widget: new ImageWidget(src, alt) });
+      const linkUrl = findWrappingLinkUrl(view.state, matchPos);
+      return Decoration.replace({ widget: new ImageWidget(src, alt, linkUrl) });
     },
   });
 

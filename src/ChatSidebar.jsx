@@ -1,4 +1,16 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import { PaperclipIcon } from './Icons.jsx';
+import {
+  classify,
+  readAsBase64,
+  readAsText,
+  formatBytes,
+  nextAttachmentId,
+  composePromptText,
+  toImageContents,
+} from './chatAttachments.js';
 
 // Build a short, human-readable summary line for a tool call.
 function toolSummary(toolName, args) {
@@ -48,6 +60,52 @@ function formatTokens(n) {
   return k < 10 ? `${k.toFixed(1).replace(/\.0$/, '')}k` : `${Math.round(k)}k`;
 }
 
+function AttachmentChip({ att, onRemove }) {
+  const handleClick = () => {
+    if (att.kind === 'image' && att.dataUrl) {
+      window.api.openExternal(att.dataUrl);
+    }
+  };
+  return (
+    <div className={`chat-attachment chat-attachment-${att.kind}`}>
+      {att.kind === 'image' ? (
+        <button
+          type="button"
+          className="chat-attachment-thumb"
+          onClick={handleClick}
+          title={att.name}
+          style={{ backgroundImage: `url("${att.dataUrl}")` }}
+          aria-label={att.name}
+        />
+      ) : (
+        <div className="chat-attachment-text" title={att.name}>
+          <span className="chat-attachment-icon">📄</span>
+          <span className="chat-attachment-name">{att.name}</span>
+          <span className="chat-attachment-size">{formatBytes(att.bytes)}</span>
+        </div>
+      )}
+      {onRemove && (
+        <button
+          type="button"
+          className="chat-attachment-remove"
+          onClick={() => onRemove(att.id)}
+          aria-label={`Remove ${att.name}`}
+        >×</button>
+      )}
+    </div>
+  );
+}
+
+function AttachmentRow({ attachments, onRemove, readOnly }) {
+  return (
+    <div className={`chat-attachments ${readOnly ? 'chat-attachments-readonly' : ''}`}>
+      {attachments.map((a) => (
+        <AttachmentChip key={a.id} att={a} onRemove={readOnly ? null : onRemove} />
+      ))}
+    </div>
+  );
+}
+
 function ToolEntry({ entry }) {
   const [open, setOpen] = useState(false);
   const status = entry.done ? (entry.isError ? '✗' : '✓') : '…';
@@ -73,19 +131,26 @@ function ToolEntry({ entry }) {
   );
 }
 
-export default function ChatSidebar({ onClose, workspacePath }) {
+const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, ref) {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [tokens, setTokens] = useState(0);
+  const [attachments, setAttachments] = useState([]);
+  const [rejected, setRejected] = useState(null); // { name, reason }
+  const [dragOver, setDragOver] = useState(false);
   const currentAssistantIdRef = useRef(null);
   const idCounterRef = useRef(0);
   const scrollRef = useRef(null);
   const textareaRef = useRef(null);
+  const fileInputRef = useRef(null);
+  const sidebarRootRef = useRef(null);
+  const lastSentUserIdRef = useRef(null);
   const runStartRef = useRef(0);
   const tickerRef = useRef(null);
+  const dragCounterRef = useRef(0);
 
   const nextId = () => `m${++idCounterRef.current}`;
 
@@ -113,6 +178,14 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     if (!el) return;
     el.scrollTop = el.scrollHeight;
   }, [messages, running]);
+
+  // Auto-grow the textarea up to ~7 lines, then internal scrolling.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
 
   const handleAgentEvent = useCallback((evt) => {
     if (!evt || !evt.type) return;
@@ -196,27 +269,52 @@ export default function ChatSidebar({ onClose, workspacePath }) {
       )));
       return;
     }
+    if (evt.type === 'agent_send_failed') {
+      // Main popped the bad user+failure messages from pi state. Mirror by
+      // removing the matching user message from our transcript and surfacing
+      // the provider error in the banner.
+      const badId = lastSentUserIdRef.current;
+      lastSentUserIdRef.current = null;
+      setMessages((prev) => prev.filter((m) => m.id !== badId));
+      setError(evt.errorMessage ?? 'Send failed.');
+      return;
+    }
   }, []);
 
   const onSend = useCallback(async () => {
-    const text = input.trim();
-    if (!text || running) return;
+    const typed = input.trim();
+    if (!typed && attachments.length === 0) return;
+    if (running) return;
     if (!workspacePath) {
       setError('Open a workspace first.');
       return;
     }
     setError(null);
+    setRejected(null);
+
+    const imageAttachments = attachments.filter((a) => a.kind === 'image');
+    const textAttachments = attachments.filter((a) => a.kind === 'text');
+    const promptText = composePromptText(typed, textAttachments);
+    const images = toImageContents(imageAttachments);
+
     const userId = nextId();
-    setMessages((prev) => [...prev, { id: userId, kind: 'user', text }]);
+    lastSentUserIdRef.current = userId;
+    setMessages((prev) => [...prev, {
+      id: userId,
+      kind: 'user',
+      text: typed,
+      attachments: attachments.map((a) => ({ ...a })),
+    }]);
     setInput('');
+    setAttachments([]);
     setRunning(true);
     try {
-      await window.api.agent.send(text);
+      await window.api.agent.send(promptText, images);
     } catch (err) {
       setRunning(false);
       setError(err?.message ?? String(err));
     }
-  }, [input, running, workspacePath]);
+  }, [input, attachments, running, workspacePath]);
 
   const onStop = useCallback(async () => {
     try { await window.api.agent.abort(); } catch {}
@@ -226,12 +324,130 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     try { await window.api.agent.reset(); } catch {}
     if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
     currentAssistantIdRef.current = null;
+    lastSentUserIdRef.current = null;
     setMessages([]);
     setError(null);
     setRunning(false);
     setTokens(0);
     setElapsedMs(0);
+    setAttachments([]);
+    setRejected(null);
   }, []);
+
+  const ingestFiles = useCallback(async (fileList) => {
+    const files = [...(fileList ?? [])];
+    if (files.length === 0) return;
+    const added = [];
+    let lastReject = null;
+    for (const file of files) {
+      const kind = classify(file);
+      if (!kind) {
+        lastReject = { name: file.name, reason: 'unsupported format' };
+        continue;
+      }
+      try {
+        if (kind === 'image') {
+          const base64 = await readAsBase64(file);
+          const mimeType = file.type;
+          const dataUrl = `data:${mimeType};base64,${base64}`;
+          added.push({
+            id: nextAttachmentId(),
+            kind: 'image',
+            name: file.name || 'image',
+            mimeType,
+            bytes: file.size,
+            base64,
+            dataUrl,
+          });
+        } else {
+          const content = await readAsText(file);
+          added.push({
+            id: nextAttachmentId(),
+            kind: 'text',
+            name: file.name,
+            bytes: file.size,
+            content,
+          });
+        }
+      } catch (err) {
+        lastReject = { name: file.name, reason: err?.message ?? String(err) };
+      }
+    }
+    if (added.length > 0) setAttachments((prev) => [...prev, ...added]);
+    if (lastReject) setRejected(lastReject);
+  }, []);
+
+  const removeAttachment = useCallback((id) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const onPickFiles = useCallback(() => {
+    fileInputRef.current?.click();
+  }, []);
+
+  const onFileInputChange = useCallback(async (e) => {
+    await ingestFiles(e.target.files);
+    e.target.value = '';
+  }, [ingestFiles]);
+
+  const onPaste = useCallback(async (e) => {
+    const files = e.clipboardData?.files;
+    if (files && files.length > 0) {
+      const anyImage = [...files].some((f) => f.type.startsWith('image/'));
+      if (anyImage) {
+        e.preventDefault();
+        await ingestFiles(files);
+      }
+    }
+  }, [ingestFiles]);
+
+  // Direct addEventListener — react-dnd-html5-backend registers a window-level
+  // capture-phase drop handler that pre-empts React's synthetic onDrop. Same
+  // pattern as src/imagePaste.js. Drag enter/leave use a counter so child
+  // elements don't flicker the overlay.
+  useEffect(() => {
+    const el = sidebarRootRef.current;
+    if (!el) return;
+    const hasFiles = (e) => {
+      const types = e.dataTransfer?.types;
+      return types && [...types].includes('Files');
+    };
+    const onEnter = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragCounterRef.current += 1;
+      setDragOver(true);
+    };
+    const onOver = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    };
+    const onLeave = (e) => {
+      if (!hasFiles(e)) return;
+      dragCounterRef.current = Math.max(0, dragCounterRef.current - 1);
+      if (dragCounterRef.current === 0) setDragOver(false);
+    };
+    const onDrop = (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      dragCounterRef.current = 0;
+      setDragOver(false);
+      ingestFiles(e.dataTransfer.files);
+    };
+    el.addEventListener('dragenter', onEnter);
+    el.addEventListener('dragover', onOver);
+    el.addEventListener('dragleave', onLeave);
+    el.addEventListener('drop', onDrop);
+    return () => {
+      el.removeEventListener('dragenter', onEnter);
+      el.removeEventListener('dragover', onOver);
+      el.removeEventListener('dragleave', onLeave);
+      el.removeEventListener('drop', onDrop);
+    };
+  }, [ingestFiles]);
 
   const onKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -240,8 +456,32 @@ export default function ChatSidebar({ onClose, workspacePath }) {
     }
   }, [onSend]);
 
+  // Imperative surface for the "Send to Agent" right-click flow in App.jsx.
+  // setComposerText replaces or appends; focusComposer moves caret to end and
+  // gives the textarea focus. Append uses a blank-line separator.
+  useImperativeHandle(ref, () => ({
+    setComposerText(text, { append = false } = {}) {
+      setInput((prev) => (append && prev ? `${prev}\n\n${text}` : text));
+    },
+    getComposerText() {
+      return input;
+    },
+    focusComposer() {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const len = el.value.length;
+      try { el.setSelectionRange(len, len); } catch {}
+    },
+  }), [input]);
+
   return (
-    <div className="chat-sidebar" role="region" aria-label="Coding agent chat">
+    <div className="chat-sidebar" role="region" aria-label="Coding agent chat" ref={sidebarRootRef}>
+      {dragOver && (
+        <div className="chat-dropzone-overlay" aria-hidden="true">
+          <div className="chat-dropzone-message">Drop to attach</div>
+        </div>
+      )}
       <div className="chat-sidebar-header">
         <span className="chat-sidebar-title">
           <svg
@@ -268,13 +508,6 @@ export default function ChatSidebar({ onClose, workspacePath }) {
         </span>
         <button
           type="button"
-          className="chat-sidebar-clear"
-          onClick={onClear}
-          title="Clear chat and start a new session (picks up new skills)"
-          aria-label="Clear chat"
-        >Clear</button>
-        <button
-          type="button"
           className="chat-sidebar-close"
           onClick={onClose}
           title="Close coding agent"
@@ -285,10 +518,25 @@ export default function ChatSidebar({ onClose, workspacePath }) {
       <div ref={scrollRef} className="chat-messages">
         {messages.map((m) => {
           if (m.kind === 'user') {
-            return <div key={m.id} className="chat-message chat-user"><div className="chat-bubble">{m.text}</div></div>;
+            return (
+              <div key={m.id} className="chat-message chat-user">
+                <div className="chat-bubble">
+                  {m.attachments && m.attachments.length > 0 && (
+                    <AttachmentRow attachments={m.attachments} readOnly />
+                  )}
+                  {m.text && <div className="chat-user-text">{m.text}</div>}
+                </div>
+              </div>
+            );
           }
           if (m.kind === 'assistant') {
-            return <div key={m.id} className="chat-message chat-assistant"><div className="chat-bubble">{m.text}</div></div>;
+            return (
+              <div key={m.id} className="chat-message chat-assistant">
+                <div className="chat-bubble chat-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+                </div>
+              </div>
+            );
           }
           if (m.kind === 'tool') {
             return <div key={m.id} className="chat-message chat-tool-row"><ToolEntry entry={m} /></div>;
@@ -323,17 +571,49 @@ export default function ChatSidebar({ onClose, workspacePath }) {
       </div>
 
       <div className="chat-composer">
+        {attachments.length > 0 && (
+          <AttachmentRow attachments={attachments} onRemove={removeAttachment} />
+        )}
+        {rejected && (
+          <div className="chat-attachment-error">
+            <span>{rejected.name}: {rejected.reason}</span>
+            <button type="button" onClick={() => setRejected(null)} aria-label="Dismiss">×</button>
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           className="chat-input"
           value={input}
-          placeholder={running ? 'Agent is working…' : 'Ask the agent…'}
+          placeholder="Ask the agent…"
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
-          rows={3}
-          disabled={running}
+          onPaste={onPaste}
+          rows={1}
+        />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/png,image/jpeg,image/gif,image/webp,.txt,.md,.markdown,.py,.js,.jsx,.ts,.tsx,.mjs,.cjs,.json,.jsonc,.yaml,.yml,.toml,.html,.htm,.css,.scss,.sass,.less,.xml,.svg,.csv,.tsv,.log,.sh,.bash,.zsh,.fish,.ps1,.rb,.go,.rs,.java,.kt,.swift,.c,.cpp,.cc,.h,.hpp,.m,.mm,.sql,.ini,.conf,.env,.gitignore,.gitattributes,.dockerfile,.lock,.properties,.gradle,.cmake"
+          style={{ display: 'none' }}
+          onChange={onFileInputChange}
         />
         <div className="chat-composer-actions">
+          <button
+            type="button"
+            className="chat-attach-btn"
+            onClick={onPickFiles}
+            disabled={running}
+            title="Attach images or text files"
+            aria-label="Attach files"
+          ><PaperclipIcon size={14} /></button>
+          <button
+            type="button"
+            className="chat-sidebar-clear"
+            onClick={onClear}
+            title="Clear chat and start a new session (picks up new skills)"
+            aria-label="Clear chat"
+          >Clear</button>
           {running ? (
             <button type="button" className="chat-stop-btn" onClick={onStop}>Stop</button>
           ) : (
@@ -341,11 +621,13 @@ export default function ChatSidebar({ onClose, workspacePath }) {
               type="button"
               className="chat-send-btn"
               onClick={onSend}
-              disabled={!input.trim() || !workspacePath}
+              disabled={(!input.trim() && attachments.length === 0) || !workspacePath}
             >Send</button>
           )}
         </div>
       </div>
     </div>
   );
-}
+});
+
+export default ChatSidebar;
