@@ -65,6 +65,8 @@ contextBridge.exposeInMainWorld('api', {
     abort: () => ipcRenderer.invoke('agent:abort'),
     reset: () => ipcRenderer.invoke('agent:reset'),
     getDefaultSystemPrompt: () => ipcRenderer.invoke('agent:getDefaultSystemPrompt'),
+    listProviders: () => ipcRenderer.invoke('agent:listProviders'),
+    listModels: (provider) => ipcRenderer.invoke('agent:listModels', provider),
     onEvent: (cb) => {
       const listener = (_evt, payload) => cb(payload);
       ipcRenderer.on('agent:event', listener);

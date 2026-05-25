@@ -7,6 +7,7 @@ import chokidar from 'chokidar';
 import { parseLinks } from './linkParser.js';
 import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
+import { getProviders, getModels } from '@earendil-works/pi-ai';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 import { installAgentTokensBridge } from './agentTokensExtension.js';
 import { installLinkIndexBridge } from './linkIndexExtension.js';
@@ -941,6 +942,30 @@ ipcMain.handle('agent:reset', async () => {
 });
 
 ipcMain.handle('agent:getDefaultSystemPrompt', async () => DEFAULT_AGENT_SYSTEM_PROMPT);
+
+// Provider + model lookups for the Settings UI. Pi-ai's `getProviders()` is
+// the source of truth; we intersect with this allowlist so OAuth /
+// multi-credential providers (bedrock, vertex, azure, cloudflare, copilot,
+// codex) are filtered out — our settings schema only carries a single API
+// key, which is insufficient for those.
+//
+// Keep in sync with src/constants.js SUPPORTED_PROVIDER_SLUGS.
+const SUPPORTED_PROVIDER_SLUGS = new Set([
+  'anthropic', 'openai', 'google', 'openrouter', 'groq', 'cerebras',
+  'deepseek', 'xai', 'mistral', 'fireworks', 'together', 'huggingface',
+  'kimi-coding', 'minimax', 'minimax-cn', 'moonshotai', 'moonshotai-cn',
+  'opencode', 'opencode-go', 'vercel-ai-gateway', 'zai', 'xiaomi',
+  'xiaomi-token-plan-cn', 'xiaomi-token-plan-ams', 'xiaomi-token-plan-sgp',
+]);
+
+ipcMain.handle('agent:listProviders', () => {
+  return getProviders().filter((slug) => SUPPORTED_PROVIDER_SLUGS.has(slug)).sort();
+});
+
+ipcMain.handle('agent:listModels', (_evt, provider) => {
+  if (!provider) return [];
+  return getModels(provider).map((m) => m.id).sort();
+});
 
 function timestampForFilename(d = new Date()) {
   const pad = (n) => String(n).padStart(2, '0');

@@ -39,10 +39,42 @@ export const SETTINGS_SECTIONS = Object.freeze({
   AGENT_SECRETS: 'agent-secrets',
 });
 
-export const AI_PROVIDERS = Object.freeze({
-  ANTHROPIC: 'anthropic',
-  OPENAI: 'openai',
-});
+// Pi-ai providers that authenticate via a single bearer API key. Provider
+// slugs come from pi-ai's model registry — we expose only the simple-key set
+// here, skipping cloud/OAuth providers (bedrock, vertex, azure, cloudflare,
+// github-copilot, openai-codex) that need more than `{provider, apiKey}` to
+// function. Slugs are passed straight through to pi (no display-name map).
+//
+// Keep in sync with electron/main.js SUPPORTED_PROVIDER_SLUGS.
+export const SUPPORTED_PROVIDER_SLUGS = Object.freeze([
+  'anthropic',
+  'openai',
+  'google',
+  'openrouter',
+  'groq',
+  'cerebras',
+  'deepseek',
+  'xai',
+  'mistral',
+  'fireworks',
+  'together',
+  'huggingface',
+  'kimi-coding',
+  'minimax',
+  'minimax-cn',
+  'moonshotai',
+  'moonshotai-cn',
+  'opencode',
+  'opencode-go',
+  'vercel-ai-gateway',
+  'zai',
+  'xiaomi',
+  'xiaomi-token-plan-cn',
+  'xiaomi-token-plan-ams',
+  'xiaomi-token-plan-sgp',
+]);
+
+export const DEFAULT_PROVIDER_SLUG = 'anthropic';
 
 export const THEME_MODES = Object.freeze({
   LIGHT: 'light',

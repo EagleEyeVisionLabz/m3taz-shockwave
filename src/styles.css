@@ -1099,6 +1099,49 @@ html, body, #root {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+/* ---------- Generic combobox (Combobox.jsx) ---------- */
+
+.combobox {
+  position: relative;
+  width: 100%;
+}
+
+.combobox .settings-input {
+  width: 100%;
+}
+
+.combobox-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-popover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  z-index: 60;
+}
+
+.combobox-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+}
+
+.combobox-item:hover,
+.combobox-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 /* ---------- Folder combobox (Daily Note → New file location) ---------- */
 
 .folder-combobox {

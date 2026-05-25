@@ -21,7 +21,7 @@ import { diffWordsWithSpace } from 'diff';
 import { rangesAddedFromDiff } from './diffFlash.js';
 import { prettyName } from './linkIndex.js';
 import { rewriteReferences } from './renameOps.js';
-import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
+import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, DEFAULT_PROVIDER_SLUG, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
 import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
@@ -161,7 +161,7 @@ export default function App() {
     return sortTreeNodes(base, treeSortOrder);
   }, [tree, treeSortOrder, bookmarkFilterActive, bookmarks]);
   const [codingAgentSettings, setCodingAgentSettings] = useState({
-    provider: AI_PROVIDERS.ANTHROPIC,
+    provider: DEFAULT_PROVIDER_SLUG,
     model: 'claude-sonnet-4-5',
     apiKey: '',
     skills: { global: {}, workspaces: {} },

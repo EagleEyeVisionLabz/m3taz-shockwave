@@ -1,40 +1,55 @@
 import React, { useEffect, useState } from 'react';
-import { AI_PROVIDERS } from '../constants.js';
+import Combobox from '../Combobox.jsx';
+import { DEFAULT_PROVIDER_SLUG } from '../constants.js';
 
-const PROVIDER_OPTIONS = [
-  { value: AI_PROVIDERS.ANTHROPIC, label: 'Anthropic' },
-  { value: AI_PROVIDERS.OPENAI, label: 'OpenAI' },
-];
-
-function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange, modelPlaceholder }) {
+function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange }) {
   const [showKey, setShowKey] = useState(false);
+  const [providers, setProviders] = useState([]);
+  const [models, setModels] = useState([]);
+
+  // Providers come from pi-ai's registry (intersected with our supported set
+  // in main). Fetched once on mount.
+  useEffect(() => {
+    let active = true;
+    window.api.agent.listProviders().then((list) => {
+      if (active) setProviders(list ?? []);
+    });
+    return () => { active = false; };
+  }, []);
+
+  // Models are scoped to the current provider. Re-fetch whenever it changes.
+  useEffect(() => {
+    if (!provider) { setModels([]); return; }
+    let active = true;
+    window.api.agent.listModels(provider).then((list) => {
+      if (active) setModels(list ?? []);
+    });
+    return () => { active = false; };
+  }, [provider]);
+
   return (
     <>
       <div className="settings-field">
         <label className="settings-field-label" htmlFor={`${idPrefix}-provider`}>Provider</label>
-        <select
+        <Combobox
           id={`${idPrefix}-provider`}
-          className="settings-select"
+          options={providers}
           value={provider}
-          onChange={(e) => onChange({ provider: e.target.value })}
-        >
-          {PROVIDER_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          // Switching providers invalidates the model — the old id won't be
+          // in the new provider's catalog, so we clear it to force a fresh pick.
+          onChange={(next) => onChange({ provider: next, model: '' })}
+          freeForm={false}
+        />
       </div>
 
       <div className="settings-field">
         <label className="settings-field-label" htmlFor={`${idPrefix}-model`}>Model</label>
-        <input
+        <Combobox
           id={`${idPrefix}-model`}
-          className="settings-input"
-          type="text"
+          options={models}
           value={model}
-          placeholder={modelPlaceholder}
-          onChange={(e) => onChange({ model: e.target.value })}
-          spellCheck={false}
-          autoComplete="off"
+          onChange={(next) => onChange({ model: next })}
+          freeForm
         />
       </div>
 
@@ -65,7 +80,7 @@ function ProviderModelKey({ idPrefix, provider, model, apiKey, onChange, modelPl
 }
 
 export default function AgentChatSection({ codingAgent, onCodingAgentChange }) {
-  const caProvider = codingAgent?.provider ?? AI_PROVIDERS.ANTHROPIC;
+  const caProvider = codingAgent?.provider ?? DEFAULT_PROVIDER_SLUG;
   const caModel = codingAgent?.model ?? '';
   const caApiKey = codingAgent?.apiKey ?? '';
   const caSystemPrompt = codingAgent?.systemPrompt ?? '';
@@ -107,7 +122,6 @@ export default function AgentChatSection({ codingAgent, onCodingAgentChange }) {
         model={caModel}
         apiKey={caApiKey}
         onChange={updateCa}
-        modelPlaceholder={caProvider === AI_PROVIDERS.OPENAI ? 'gpt-4o' : 'claude-sonnet-4-5'}
       />
 
       <h3 className="settings-subsection-title" style={{ marginTop: 24 }}>System Prompt</h3>
