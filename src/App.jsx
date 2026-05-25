@@ -14,11 +14,15 @@ import ErrorMessage from './ErrorMessage.jsx';
 import EditorStatusBar from './EditorStatusBar.jsx';
 import ChatSidebar from './ChatSidebar.jsx';
 import Dialog from './Dialog.jsx';
+import JournalDatePicker from './JournalDatePicker.jsx';
+import QuickSearch from './QuickSearch.jsx';
+import { formatDailyNote, resolveDailyNotePath } from './dailyNote.js';
 import { diffWordsWithSpace } from 'diff';
 import { rangesAddedFromDiff } from './diffFlash.js';
 import { prettyName } from './linkIndex.js';
 import { rewriteReferences } from './renameOps.js';
-import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, VIEW_MODES, SAVE_STATES } from './constants.js';
+import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, AI_PROVIDERS, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
+import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
@@ -37,6 +41,61 @@ function basenameOf(p) {
 function dirOf(p) {
   const i = p.lastIndexOf('/');
   return i >= 0 ? p.slice(0, i) : '';
+}
+
+// Convert an absolute file path to a workspace-relative POSIX path. Returns
+// null when the file isn't inside the workspace (so the caller can skip it).
+function toRelPath(absPath, workspacePath) {
+  if (!workspacePath || !absPath) return null;
+  if (absPath === workspacePath) return null;
+  const prefix = workspacePath.endsWith('/') ? workspacePath : workspacePath + '/';
+  if (!absPath.startsWith(prefix)) return null;
+  return absPath.slice(prefix.length);
+}
+
+function toAbsPath(relPath, workspacePath) {
+  if (!workspacePath || !relPath) return null;
+  return `${workspacePath}/${relPath}`;
+}
+
+// Prune the tree to only the bookmarked files and the folders that contain
+// them. Folders with no bookmarked descendants are removed.
+function filterTreeToBookmarks(nodes, bookmarkedSet) {
+  const out = [];
+  for (const n of nodes) {
+    if (n.children) {
+      const filteredChildren = filterTreeToBookmarks(n.children, bookmarkedSet);
+      if (filteredChildren.length > 0) {
+        out.push({ ...n, children: filteredChildren });
+      }
+    } else if (bookmarkedSet.has(n.id)) {
+      out.push(n);
+    }
+  }
+  return out;
+}
+
+// Sort the tree recursively. Folders are always pinned to the top in A→Z order;
+// only files within each folder are re-ordered per `order`. Missing timestamps
+// (older builds, race with delete) fall back to 0 so the node still appears.
+function sortTreeNodes(nodes, order) {
+  const cmpName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });
+  const out = nodes.slice().sort((a, b) => {
+    const aDir = !!a.children;
+    const bDir = !!b.children;
+    if (aDir !== bDir) return aDir ? -1 : 1;
+    if (aDir) return cmpName(a, b);
+    switch (order) {
+      case TREE_SORT_ORDERS.NAME_DESC: return cmpName(b, a);
+      case TREE_SORT_ORDERS.MODIFIED_DESC: return (b.mtime ?? 0) - (a.mtime ?? 0);
+      case TREE_SORT_ORDERS.MODIFIED_ASC: return (a.mtime ?? 0) - (b.mtime ?? 0);
+      case TREE_SORT_ORDERS.CREATED_DESC: return (b.ctime ?? 0) - (a.ctime ?? 0);
+      case TREE_SORT_ORDERS.CREATED_ASC: return (a.ctime ?? 0) - (b.ctime ?? 0);
+      case TREE_SORT_ORDERS.NAME_ASC:
+      default: return cmpName(a, b);
+    }
+  });
+  return out.map((n) => (n.children ? { ...n, children: sortTreeNodes(n.children, order) } : n));
 }
 
 function flattenAll(nodes, out = []) {
@@ -78,10 +137,29 @@ export default function App() {
   // resolver. `initialUrl` / `initialText` (Edit mode) optionally pre-fill the
   // form. Resolver receives { url, text } | null.
   const [urlPromptOpts, setUrlPromptOpts] = useState(null);
+  const [journalPickerAnchor, setJournalPickerAnchor] = useState(null);
+  const [quickSearchOpen, setQuickSearchOpen] = useState(false);
+  // Bookmarks: a Set of absolute file paths in the current workspace. The
+  // on-disk file (`<workspace>/.shockwave/bookmarks.json`) stores workspace-
+  // relative paths; we convert on read/write.
+  const [bookmarks, setBookmarks] = useState(() => new Set());
+  const bookmarksRef = useRef(bookmarks);
+  useEffect(() => { bookmarksRef.current = bookmarks; }, [bookmarks]);
+  const [bookmarkFilterActive, setBookmarkFilterActive] = useState(false);
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
   const [hideLineNumbers, setHideLineNumbers] = useState(false);
   const hideLineNumbersRef = useRef(false);
   useEffect(() => { hideLineNumbersRef.current = hideLineNumbers; }, [hideLineNumbers]);
+  const [dailyNote, setDailyNote] = useState({ format: 'YYYY-MM-DD', folder: '' });
+  const dailyNoteRef = useRef(dailyNote);
+  useEffect(() => { dailyNoteRef.current = dailyNote; }, [dailyNote]);
+  const [treeSortOrder, setTreeSortOrder] = useState(TREE_SORT_ORDERS.NAME_ASC);
+  const treeSortOrderRef = useRef(TREE_SORT_ORDERS.NAME_ASC);
+  useEffect(() => { treeSortOrderRef.current = treeSortOrder; }, [treeSortOrder]);
+  const sortedTree = useMemo(() => {
+    const base = bookmarkFilterActive ? filterTreeToBookmarks(tree, bookmarks) : tree;
+    return sortTreeNodes(base, treeSortOrder);
+  }, [tree, treeSortOrder, bookmarkFilterActive, bookmarks]);
   const [codingAgentSettings, setCodingAgentSettings] = useState({
     provider: AI_PROVIDERS.ANTHROPIC,
     model: 'claude-sonnet-4-5',
@@ -332,6 +410,8 @@ export default function App() {
         themeMode: next.themeMode,
         hideLineNumbers: next.hideLineNumbers ?? hideLineNumbersRef.current,
       },
+      dailyNote: next.dailyNote ?? dailyNoteRef.current,
+      treeSortOrder: next.treeSortOrder ?? treeSortOrderRef.current,
       codingAgent: next.codingAgent ?? codingAgentSettingsRef.current,
       agentSecrets: next.agentSecrets ?? agentSecretsRef.current,
       sidebarWidth: next.sidebarWidth ?? sidebarWidthRef.current,
@@ -367,12 +447,32 @@ export default function App() {
     setSelectedFolderPath(null);
     setGraphMode(false);
     setSaveState(SAVE_STATES.SAVED);
-    const [treeData, files] = await Promise.all([
+    setBookmarks(new Set());
+    setBookmarkFilterActive(false);
+    const [treeData, files, bookmarkRelPaths] = await Promise.all([
       window.api.readTree(workspace.path),
       window.api.readAllMarkdown(workspace.path),
+      window.api.bookmarks.read(workspace.path),
     ]);
     setTree(treeData);
     linkIndex.rebuild(files);
+    // Convert stored rel paths to abs paths and prune stale entries (files
+    // that no longer exist on disk). A subsequent write trims the on-disk
+    // file too — we don't keep dangling refs around.
+    const absSet = new Set();
+    const stillExists = new Set(files.map((f) => f.path));
+    let needsRewrite = false;
+    for (const rel of bookmarkRelPaths) {
+      const abs = toAbsPath(rel, workspace.path);
+      if (abs && stillExists.has(abs)) absSet.add(abs);
+      else needsRewrite = true;
+    }
+    setBookmarks(absSet);
+    bookmarksRef.current = absSet;
+    if (needsRewrite) {
+      const cleaned = Array.from(absSet).map((p) => toRelPath(p, workspace.path)).filter(Boolean);
+      window.api.bookmarks.write(workspace.path, cleaned).catch(() => {});
+    }
     await window.api.watchStart(workspace.path);
   }, [writeNow, resetTabs, linkIndex]);
 
@@ -434,6 +534,79 @@ export default function App() {
     hideLineNumbersRef.current = next;
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, hideLineNumbers: next });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  const onDailyNoteChange = useCallback(async (next) => {
+    setDailyNote(next);
+    dailyNoteRef.current = next;
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, dailyNote: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  const onTreeSortOrderChange = useCallback(async (next) => {
+    setTreeSortOrder(next);
+    treeSortOrderRef.current = next;
+    await persistSettings({ workspaces, activeWorkspaceId, themeMode, treeSortOrder: next });
+  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  // Bookmark toggle. Writes the new set to disk (workspace-relative paths).
+  const toggleBookmark = useCallback(async (absPath) => {
+    if (!workspacePath || !absPath) return;
+    const next = new Set(bookmarksRef.current);
+    if (next.has(absPath)) next.delete(absPath);
+    else next.add(absPath);
+    setBookmarks(next);
+    bookmarksRef.current = next;
+    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    try {
+      await window.api.bookmarks.write(workspacePath, rels);
+    } catch (err) {
+      showError(`Failed to save bookmarks: ${err.message ?? err}`);
+    }
+  }, [workspacePath, showError]);
+
+  // Rewrite a single path inside the bookmark set (used by rename flows).
+  // No write here — caller batches and persists once.
+  const renameBookmarkPath = useCallback((oldPath, newPath) => {
+    const cur = bookmarksRef.current;
+    if (!cur.has(oldPath)) return false;
+    const next = new Set(cur);
+    next.delete(oldPath);
+    next.add(newPath);
+    setBookmarks(next);
+    bookmarksRef.current = next;
+    return true;
+  }, []);
+
+  // Drop a path from the bookmark set (used when a file is deleted).
+  const removeBookmarkPath = useCallback((absPath) => {
+    const cur = bookmarksRef.current;
+    if (!cur.has(absPath)) return false;
+    const next = new Set(cur);
+    next.delete(absPath);
+    setBookmarks(next);
+    bookmarksRef.current = next;
+    return true;
+  }, []);
+
+  // Persist current bookmarks to disk. Used after batched rename/delete edits.
+  const persistBookmarks = useCallback(async () => {
+    if (!workspacePath) return;
+    const rels = Array.from(bookmarksRef.current).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    try {
+      await window.api.bookmarks.write(workspacePath, rels);
+    } catch (err) {
+      console.warn('[bookmarks] persist failed:', err);
+    }
+  }, [workspacePath]);
+
+  // Intercept the bookmark-toggle action so we don't pollute useFileOps with
+  // it; delegate everything else to the original handler.
+  const onFileActionWithBookmarks = useCallback((action, filePath) => {
+    if (action === FILE_ACTIONS.TOGGLE_BOOKMARK) {
+      toggleBookmark(filePath);
+      return;
+    }
+    fileOps.onFileAction(action, filePath);
+  }, [fileOps, toggleBookmark]);
 
   const onToggleViewMode = useCallback(async () => {
     const next = viewMode === VIEW_MODES.LIVE ? VIEW_MODES.RAW : VIEW_MODES.LIVE;
@@ -540,6 +713,38 @@ export default function App() {
     const dir = selectedFolderPath || workspacePath;
     await createFolderAt(dir);
   }, [workspacePath, selectedFolderPath, createFolderAt]);
+
+  // ---- journal (calendar in thin sidebar) ----
+  // openJournal(date?) — opens (or creates) the daily note for `date` (default
+  // today) using the user's configured format + folder. If the format contains
+  // "/" the leading segments become subfolders. Existing notes are opened in
+  // place regardless of where they live (basename uniqueness is workspace-wide).
+  const openJournal = useCallback(async (date) => {
+    if (!workspacePath) return;
+    const d = date ?? new Date();
+    const dn = dailyNoteRef.current;
+    const formatted = formatDailyNote(dn.format, d);
+    if (!formatted) {
+      showError('Daily note format is invalid. Open Settings → Daily Note to fix it.');
+      return;
+    }
+    const { dir, name } = resolveDailyNotePath(workspacePath, dn.folder, formatted);
+    try {
+      await writeNow();
+      const existing = linkIndex.pageIndexRef.current.get(name.toLowerCase());
+      if (existing) {
+        await openInActiveTab(existing);
+        return;
+      }
+      await window.api.ensureDir(dir);
+      const newPath = await window.api.createFile(dir, `${name}.md`, '');
+      linkIndex.updateFile(newPath, '');
+      await fileOps.treeAndIndexChanged();
+      await openInActiveTab(newPath);
+    } catch (err) {
+      showError(err.message ?? String(err));
+    }
+  }, [workspacePath, writeNow, linkIndex, openInActiveTab, fileOps, showError]);
 
   // ---- handle drag-and-drop moves from the tree ----
   // dragIds = list of source paths (files or folders). destFolderId is the destination
@@ -827,6 +1032,18 @@ export default function App() {
       const hide = !!settings.appearance?.hideLineNumbers;
       setHideLineNumbers(hide);
       hideLineNumbersRef.current = hide;
+      if (settings.dailyNote) {
+        const dn = {
+          format: settings.dailyNote.format || 'YYYY-MM-DD',
+          folder: settings.dailyNote.folder ?? '',
+        };
+        setDailyNote(dn);
+        dailyNoteRef.current = dn;
+      }
+      if (typeof settings.treeSortOrder === 'string') {
+        setTreeSortOrder(settings.treeSortOrder);
+        treeSortOrderRef.current = settings.treeSortOrder;
+      }
       setWorkspaces(settings.workspaces || []);
       if (settings.codingAgent) {
         setCodingAgentSettings(settings.codingAgent);
@@ -1079,27 +1296,70 @@ export default function App() {
       <ThinSidebar
         onNewFile={onNewFile}
         onNewFolder={onNewFolder}
+        onOpenJournal={() => openJournal()}
+        onJournalContextMenu={(x, y) => setJournalPickerAnchor({ x, y })}
         onToggleGraph={onToggleGraph}
         graphMode={graphMode}
         disabled={!workspacePath}
       />
+      <QuickSearch
+        open={quickSearchOpen}
+        tree={sortedTree}
+        sortOrder={treeSortOrder}
+        workspacePath={workspacePath}
+        onClose={() => setQuickSearchOpen(false)}
+        onPick={async (path) => {
+          setQuickSearchOpen(false);
+          if (graphMode) setGraphMode(false);
+          await openInActiveTab(path);
+        }}
+      />
+      <JournalDatePicker
+        open={!!journalPickerAnchor}
+        anchor={journalPickerAnchor}
+        onClose={() => setJournalPickerAnchor(null)}
+        onPick={(date) => {
+          setJournalPickerAnchor(null);
+          openJournal(date);
+        }}
+      />
 
       <aside className="sidebar">
+        <SortBar
+          value={treeSortOrder}
+          onChange={onTreeSortOrderChange}
+          onOpenQuickSearch={() => setQuickSearchOpen(true)}
+          onCollapseAll={() => fileTreeRef.current?.closeAll?.()}
+          bookmarkFilterActive={bookmarkFilterActive}
+          onToggleBookmarkFilter={() => setBookmarkFilterActive((v) => !v)}
+          bookmarks={bookmarks}
+          workspacePath={workspacePath}
+          onPickBookmark={async (absPath) => {
+            if (graphMode) setGraphMode(false);
+            await openInActiveTab(absPath);
+          }}
+          disabled={!workspacePath}
+        />
         <div className="tree-wrap">
-          {tree.length > 0 ? (
+          {sortedTree.length > 0 ? (
             <FileTree
               ref={fileTreeRef}
-              data={tree}
+              data={sortedTree}
               onSelect={onSelect}
               onRename={onTreeRename}
-              onFileAction={fileOps.onFileAction}
+              onFileAction={onFileActionWithBookmarks}
               onFolderAction={onFolderAction}
               onMoveItems={onMoveItems}
               disableDrop={disableDrop}
+              bookmarkedPaths={bookmarks}
             />
           ) : (
             <div className="empty">
-              {workspacePath ? 'Empty workspace' : 'No workspace open'}
+              {!workspacePath
+                ? 'No workspace open'
+                : bookmarkFilterActive
+                  ? 'No bookmarks'
+                  : 'Empty workspace'}
             </div>
           )}
         </div>
@@ -1312,6 +1572,10 @@ export default function App() {
           onThemeModeChange={onThemeModeChange}
           hideLineNumbers={hideLineNumbers}
           onHideLineNumbersChange={onHideLineNumbersChange}
+          dailyNote={dailyNote}
+          onDailyNoteChange={onDailyNoteChange}
+          tree={tree}
+          workspacePath={workspacePath}
           codingAgent={codingAgentSettings}
           onCodingAgentChange={onCodingAgentChange}
           agentSecrets={agentSecrets}

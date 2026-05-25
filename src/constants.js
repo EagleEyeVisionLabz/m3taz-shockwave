@@ -8,6 +8,7 @@ export const FILE_ACTIONS = Object.freeze({
   REVEAL: 'reveal',
   RENAME: 'rename',
   DELETE: 'delete',
+  TOGGLE_BOOKMARK: 'toggleBookmark',
 });
 
 // Keep in sync with electron/main.js FOLDER_ACTIONS.
@@ -31,6 +32,7 @@ export const EDITOR_ACTIONS = Object.freeze({
 export const SETTINGS_SECTIONS = Object.freeze({
   APPEARANCE: 'appearance',
   WORKSPACES: 'workspaces',
+  DAILY_NOTE: 'daily-note',
   AGENT_LLM: 'agent-llm',
   AGENT_SKILLS: 'agent-skills',
   AGENT_WORKSPACE_SKILLS: 'agent-workspace-skills',
@@ -59,4 +61,24 @@ export const VIEW_MODES = Object.freeze({
 export const SAVE_STATES = Object.freeze({
   SAVED: 'saved',
   UNSAVED: 'unsaved',
+});
+
+// File-tree sort order. Folders are always pinned to the top in A→Z order;
+// these values only re-order files within their folder.
+export const TREE_SORT_ORDERS = Object.freeze({
+  NAME_ASC: 'name-asc',
+  NAME_DESC: 'name-desc',
+  MODIFIED_DESC: 'modified-desc',
+  MODIFIED_ASC: 'modified-asc',
+  CREATED_DESC: 'created-desc',
+  CREATED_ASC: 'created-asc',
+});
+
+export const TREE_SORT_LABELS = Object.freeze({
+  [TREE_SORT_ORDERS.NAME_ASC]: 'Name (A → Z)',
+  [TREE_SORT_ORDERS.NAME_DESC]: 'Name (Z → A)',
+  [TREE_SORT_ORDERS.MODIFIED_DESC]: 'Modified (new → old)',
+  [TREE_SORT_ORDERS.MODIFIED_ASC]: 'Modified (old → new)',
+  [TREE_SORT_ORDERS.CREATED_DESC]: 'Created (new → old)',
+  [TREE_SORT_ORDERS.CREATED_ASC]: 'Created (old → new)',
 });

@@ -7,6 +7,7 @@ import AgentChatSection from './settings/AgentChatSection.jsx';
 import AiSkillsTab from './settings/AiSkillsTab.jsx';
 import WorkspaceSkillsTab from './settings/WorkspaceSkillsTab.jsx';
 import AgentSecretsSection from './settings/AgentSecretsSection.jsx';
+import DailyNoteSection from './settings/DailyNoteSection.jsx';
 
 // Sidebar layout: section headers group related items. Header rows are
 // non-interactive labels; item rows are the actual nav buttons. To add a new
@@ -15,6 +16,7 @@ const NAV = [
   { kind: 'header', label: 'General' },
   { kind: 'item', id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
   { kind: 'item', id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
+  { kind: 'item', id: SETTINGS_SECTIONS.DAILY_NOTE, label: 'Daily Notes' },
   { kind: 'header', label: 'AI' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'Agent Chat' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SKILLS, label: 'Global Skills' },
@@ -36,6 +38,10 @@ export default function SettingsModal({
   onThemeModeChange,
   hideLineNumbers,
   onHideLineNumbersChange,
+  dailyNote,
+  onDailyNoteChange,
+  tree,
+  workspacePath,
   codingAgent,
   onCodingAgentChange,
   agentSecrets,
@@ -110,6 +116,14 @@ export default function SettingsModal({
               onAdd={onAddWorkspace}
               onSwitch={(id) => { onSwitchWorkspace(id); onClose(); }}
               onRemove={onRemoveWorkspace}
+            />
+          )}
+          {active === SETTINGS_SECTIONS.DAILY_NOTE && (
+            <DailyNoteSection
+              dailyNote={dailyNote}
+              onDailyNoteChange={onDailyNoteChange}
+              tree={tree}
+              workspacePath={workspacePath}
             />
           )}
           {active === SETTINGS_SECTIONS.AGENT_LLM && (

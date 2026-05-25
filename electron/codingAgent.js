@@ -14,6 +14,7 @@ import { createAgentSession, AuthStorage, ModelRegistry, SessionManager, Default
 import { getModel } from '@earendil-works/pi-ai';
 import { agentDirFor, ensureDirs, listInstalled, computeEffectivePaths, writePiSettings } from './skillLibrary.js';
 import { ensureAgentTokensExtension } from './agentTokensExtension.js';
+import { ensureLinkIndexExtension } from './linkIndexExtension.js';
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 
 const state = {
@@ -54,9 +55,10 @@ async function ensureSession({ workspacePath, provider, model, apiKey, systemPro
   // the current source. Pi reads `extensions: []` from <agentDir>/settings.json
   // to discover it.
   const agentTokensPath = await ensureAgentTokensExtension(userDataDir);
+  const linkIndexPath = await ensureLinkIndexExtension(userDataDir);
   await writePiSettings(userDataDir, {
     skills: effectivePaths,
-    extensions: [agentTokensPath],
+    extensions: [agentTokensPath, linkIndexPath],
   });
 
   if (state.session && state.key === key) return state.session;

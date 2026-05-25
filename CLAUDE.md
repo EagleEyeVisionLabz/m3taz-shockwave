@@ -74,7 +74,18 @@ The link index is keyed by basename, so two files sharing a name break it. The I
 
 This is a deliberate simplification — Obsidian allows duplicate basenames and uses path-prefixed links (`[[folder/Foo]]`) to disambiguate. See `docs/path-prefixed-links.md` for the design of that future direction.
 
-**Terminology:** the user-facing term is **file**. Use "file" in UI strings, dialog text, button labels, and user-visible copy ("New file", "Delete file", "There's already a file with the same name", etc.). "Page" and "note" should not appear in user-visible text — they were earlier conventions that have been retired.
+### Terminology
+
+The canonical names. Use these in UI strings, comments, docs, agent prompts — anywhere a human (user or contributor) might read them.
+
+- **File** — a `.md` document in the workspace. The user-facing noun for the thing you create / open / edit / delete. **Never use "page" or "note"** — both were earlier conventions that have been retired.
+- **Basename** — a file's name with no folder path and no `.md` extension. For `notes/projects/Foo.md`, the basename is `Foo`. This is what wiki-links use, and what the link index is keyed by.
+- **Workspace** — the folder on disk the user has opened. Everything inside it (files, images, other assets) is part of the workspace. Code sometimes still says "vault" (Obsidian-inherited); new code uses "workspace".
+- **Wiki-link** — the `[[Some File]]` syntax linking one file to another by basename. The term comes from MediaWiki/Obsidian/etc. Variants: `[[File#Heading]]`, `[[File|Display]]`. Resolution is workspace-wide, case-insensitive, basename-only — never include a folder path. The parser + index live in `src/linkIndex.js`.
+- **External link** — the `[label](https://…)` markdown form. Always means an off-workspace URL. Opens in the system browser. Not to be confused with wiki-links.
+- **Backlink** — a wiki-link that points *at* a given file from elsewhere. The link index maintains backlinks per file; the backlinks panel under the editor reads from that.
+
+Avoid: "page", "note", "document" (for `.md` files), "vault" (in new code/copy), "internal link" (call it a wiki-link).
 
 ### Invariants when touching files/links
 

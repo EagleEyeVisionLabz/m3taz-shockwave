@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, protocol, net, safeStorage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, Menu, shell, nativeTheme, protocol, net, safeStorage, screen } from 'electron';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import fs from 'node:fs/promises';
@@ -9,6 +9,7 @@ import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 import { installAgentTokensBridge } from './agentTokensExtension.js';
+import { installLinkIndexBridge } from './linkIndexExtension.js';
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -25,6 +26,10 @@ const DEFAULT_SETTINGS = {
   workspaces: [],
   activeWorkspaceId: null,
   appearance: { themeMode: 'system', hideLineNumbers: false },
+  // Daily-note settings. `format` is a dayjs format string (Obsidian-style).
+  // It may contain "/" — those become folder boundaries beneath `folder`.
+  // `folder` is a workspace-relative path ('' or '/' = workspace root).
+  dailyNote: { format: 'YYYY-MM-DD', folder: '' },
   codingAgent: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
@@ -45,6 +50,15 @@ const DEFAULT_SETTINGS = {
   agentSecrets: [],
   chatSidebarOpen: false,
   chatSidebarWidth: 360,
+  // File-tree sort order. One of: 'name-asc' | 'name-desc' | 'modified-desc' |
+  // 'modified-asc' | 'created-desc' | 'created-asc'. Folders are always pinned
+  // to the top in A→Z order; this setting only re-orders files.
+  treeSortOrder: 'name-asc',
+  // Window bounds. `null` until the user resizes/moves at least once. Stored
+  // as `{ x, y, width, height, maximized }`. On restore we validate against
+  // currently-attached displays and fall back to a centered 1200×800 if the
+  // saved rect no longer intersects any display.
+  windowBounds: null,
 };
 
 // ─── Secret encryption ───────────────────────────────────────────────────────
@@ -58,6 +72,11 @@ let warnedNoEncryption = false;
 
 function encryptSecret(plain) {
   if (!plain) return '';
+  // Idempotent: a value already wrapped with our prefix is treated as
+  // already-encrypted and passed through unchanged. Lets writeSettings
+  // accept a merged object that mixes plaintext (from renderer) and
+  // ciphertext (preserved from disk) without double-encrypting.
+  if (typeof plain === 'string' && plain.startsWith(ENC_PREFIX)) return plain;
   if (!safeStorage.isEncryptionAvailable()) {
     if (!warnedNoEncryption) {
       console.warn('[secrets] safeStorage encryption unavailable — secrets stored in plaintext');
@@ -91,6 +110,7 @@ async function readSettings() {
       ...DEFAULT_SETTINGS,
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...(parsed.appearance ?? {}) },
+      dailyNote: { ...DEFAULT_SETTINGS.dailyNote, ...(parsed.dailyNote ?? {}) },
       codingAgent: {
         ...DEFAULT_SETTINGS.codingAgent,
         ...(parsed.codingAgent ?? {}),
@@ -115,12 +135,33 @@ async function readSettings() {
   }
 }
 
-async function writeSettings(obj) {
+// Serialize all settings writes through this promise chain so concurrent
+// callers (renderer-side persistSettings vs main-side persistWindowBounds)
+// can't race a partial overwrite of the file.
+let settingsWriteQueue = Promise.resolve();
+
+// Shallow-merges `patch` over the on-disk file, then atomically writes back.
+// This is what lets main write only `{ windowBounds }` without clobbering the
+// renderer's other fields, and vice versa.
+async function writeSettings(patch) {
+  const task = settingsWriteQueue.then(() => doWriteSettings(patch));
+  settingsWriteQueue = task.catch(() => {});
+  return task;
+}
+
+async function doWriteSettings(patch) {
   const file = settingsPath();
   const tmp = `${file}.tmp`;
-  // Clone + encrypt secret-bearing fields so the on-disk file never contains
-  // plaintext tokens. The caller's object is untouched.
-  const out = structuredClone(obj);
+  let existing = {};
+  try {
+    const raw = await fs.readFile(file, 'utf8');
+    existing = JSON.parse(raw);
+  } catch {
+    // No file yet — first write creates it.
+  }
+  const out = { ...existing, ...patch };
+  // Encrypt secret-bearing fields. encryptSecret is idempotent so values that
+  // came from the on-disk file (already encrypted) pass through unchanged.
   if (out.codingAgent) out.codingAgent.apiKey = encryptSecret(out.codingAgent.apiKey ?? '');
   if (Array.isArray(out.agentSecrets)) {
     out.agentSecrets = out.agentSecrets.map((s) => ({
@@ -153,6 +194,7 @@ const FILE_ACTIONS = Object.freeze({
   REVEAL: 'reveal',
   RENAME: 'rename',
   DELETE: 'delete',
+  TOGGLE_BOOKMARK: 'toggleBookmark',
 });
 
 // Keep in sync with src/constants.js EDITOR_ACTIONS.
@@ -173,10 +215,74 @@ const FOLDER_ACTIONS = Object.freeze({
   DELETE: 'delete',
 });
 
-function createWindow() {
-  const win = new BrowserWindow({
-    width: 1200,
-    height: 800,
+const DEFAULT_WINDOW_SIZE = { width: 1200, height: 800 };
+
+// True if `bounds` overlaps the work area of any currently-connected display.
+// We accept partial overlap (so a window mostly off-screen still restores) —
+// the OS clamps it on show. Returns false for nullish/zero-size rects too.
+function boundsAreVisible(bounds) {
+  if (!bounds) return false;
+  const { x, y, width, height } = bounds;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  if (!(width > 100) || !(height > 100)) return false;
+  for (const d of screen.getAllDisplays()) {
+    const w = d.workArea;
+    const intersects =
+      x < w.x + w.width &&
+      x + width > w.x &&
+      y < w.y + w.height &&
+      y + height > w.y;
+    if (intersects) return true;
+  }
+  return false;
+}
+
+// Debounced + close-flushed persistence for window bounds. Captures the
+// last-known *unmaximized* bounds (so restoring after a maximized session
+// brings the window back to the size the user was actually using before
+// maximizing).
+function attachWindowBoundsPersistence(win) {
+  let normalBounds = win.getBounds();
+  let timer = null;
+
+  const save = () => {
+    if (win.isDestroyed()) return;
+    const maximized = win.isMaximized();
+    const bounds = maximized ? normalBounds : win.getBounds();
+    if (!maximized) normalBounds = bounds;
+    writeSettings({ windowBounds: { ...bounds, maximized } }).catch((err) => {
+      console.warn('[settings] failed to persist window bounds:', err.message);
+    });
+  };
+
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(save, 400);
+  };
+
+  const onChange = () => {
+    if (!win.isMaximized() && !win.isFullScreen()) {
+      normalBounds = win.getBounds();
+    }
+    schedule();
+  };
+
+  win.on('resize', onChange);
+  win.on('move', onChange);
+  win.on('maximize', schedule);
+  win.on('unmaximize', schedule);
+  win.on('close', () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    save();
+  });
+}
+
+async function createWindow() {
+  const settings = await readSettings();
+  const saved = settings.windowBounds;
+  const useSaved = saved && boundsAreVisible(saved);
+  const opts = {
+    ...DEFAULT_WINDOW_SIZE,
     title: APP_NAME,
     icon: ICON_PATH,
     webPreferences: {
@@ -184,7 +290,18 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
     },
-  });
+  };
+  if (useSaved) {
+    opts.x = saved.x;
+    opts.y = saved.y;
+    opts.width = saved.width;
+    opts.height = saved.height;
+  }
+  const win = new BrowserWindow(opts);
+
+  if (useSaved && saved.maximized) win.maximize();
+
+  attachWindowBoundsPersistence(win);
 
   if (DEV_URL) {
     win.loadURL(DEV_URL);
@@ -216,9 +333,23 @@ async function buildTree(dirPath) {
             children: await buildTree(fullPath),
           };
         }
-        return { id: fullPath, name: e.name };
+        // Stat each file so the renderer can sort by modified/created time.
+        // birthtimeMs is the file's true creation time on macOS/Windows; on
+        // Linux it may equal mtime depending on the fs.
+        let mtime = 0;
+        let ctime = 0;
+        try {
+          const st = await fs.stat(fullPath);
+          mtime = st.mtimeMs;
+          ctime = st.birthtimeMs || st.ctimeMs;
+        } catch {
+          // Race with concurrent rm/move — leave as 0; node still appears in the tree.
+        }
+        return { id: fullPath, name: e.name, mtime, ctime };
       })
   );
+  // Default order — folders first, names A→Z. Renderer re-sorts files per the
+  // user's chosen sort order; folders stay in this base order.
   children.sort((a, b) => {
     const aDir = !!a.children;
     const bDir = !!b.children;
@@ -485,7 +616,7 @@ function revealLabel() {
 
 ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
-  const { isMd = true } = opts;
+  const { isMd = true, isBookmarked = false } = opts;
   return new Promise((resolve) => {
     let chosen = null;
     const template = [];
@@ -496,6 +627,11 @@ ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
     }
     template.push(
       { label: 'Duplicate', click: () => { chosen = FILE_ACTIONS.DUPLICATE; } },
+      { type: 'separator' },
+      {
+        label: isBookmarked ? 'Remove bookmark' : 'Bookmark',
+        click: () => { chosen = FILE_ACTIONS.TOGGLE_BOOKMARK; },
+      },
       { type: 'separator' },
       { label: revealLabel(), click: () => { chosen = FILE_ACTIONS.REVEAL; } },
       { type: 'separator' },
@@ -544,6 +680,51 @@ ipcMain.handle('fs:createFolder', async (_evt, { dirPath, name = 'New folder' })
   }
   await fs.mkdir(candidate, { recursive: true });
   return candidate;
+});
+
+// Recursive mkdir for an absolute path. Unlike fs:createFolder it does NOT
+// auto-disambiguate — the caller wants this exact path. Idempotent. Used by
+// the daily-note flow when the format contains "/" (e.g. "YYYY/MM/DD") so
+// intermediate year/month folders get created in place.
+ipcMain.handle('fs:ensureDir', async (_evt, dirPath) => {
+  await fs.mkdir(dirPath, { recursive: true });
+  return dirPath;
+});
+
+// ─── Bookmarks ──────────────────────────────────────────────────────────────
+// Stored at `<workspace>/.shockwave/bookmarks.json` as:
+//   { "version": 1, "paths": ["folder/sub/file.md", ...] }
+// Paths are workspace-relative (POSIX-style) so renames + folder moves can be
+// applied in place and the file survives the workspace folder moving on disk.
+// The `.shockwave` segment starts with a dot, which matches the watcher's
+// `ignored` predicate — our own writes don't trigger fs:changed events.
+
+function bookmarksPath(workspacePath) {
+  return path.join(workspacePath, '.shockwave', 'bookmarks.json');
+}
+
+ipcMain.handle('bookmarks:read', async (_evt, workspacePath) => {
+  if (!workspacePath) return [];
+  try {
+    const raw = await fs.readFile(bookmarksPath(workspacePath), 'utf8');
+    const parsed = JSON.parse(raw);
+    const paths = Array.isArray(parsed?.paths) ? parsed.paths : [];
+    // De-dupe + keep only strings.
+    return Array.from(new Set(paths.filter((p) => typeof p === 'string' && p.length > 0)));
+  } catch {
+    // Missing or corrupt — treat as empty. A subsequent write will replace it.
+    return [];
+  }
+});
+
+ipcMain.handle('bookmarks:write', async (_evt, { workspacePath, paths }) => {
+  if (!workspacePath) return;
+  const file = bookmarksPath(workspacePath);
+  const tmp = `${file}.tmp`;
+  const body = JSON.stringify({ version: 1, paths: Array.isArray(paths) ? paths : [] }, null, 2);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(tmp, body, 'utf8');
+  await fs.rename(tmp, file);
 });
 
 ipcMain.handle('fs:moveItem', async (_evt, { srcPath, destDir }) => {
@@ -1017,6 +1198,17 @@ ipcMain.handle('fs:watchStop', stopWatcher);
 
 app.on('before-quit', () => { stopWatcher(); agentReset().catch(() => {}); });
 
+// Drain any pending settings writes (notably the window-bounds save fired
+// from each window's `close` handler) before the process exits. Without this
+// step a fast Cmd+Q can race the async tmp+rename and lose the last bounds.
+let cleanQuitting = false;
+app.on('will-quit', (event) => {
+  if (cleanQuitting) return;
+  event.preventDefault();
+  cleanQuitting = true;
+  settingsWriteQueue.finally(() => app.exit());
+});
+
 ipcMain.handle('theme:getInitial', () => ({
   dark: nativeTheme.shouldUseDarkColors,
 }));
@@ -1035,6 +1227,57 @@ nativeTheme.on('updated', () => {
 installAgentTokensBridge(async () => {
   const settings = await readSettings();
   return settings.agentSecrets ?? [];
+});
+
+// Install the bridge the link-index pi extension uses for resolve_link +
+// create_file. Re-reads workspace settings on every call so the active
+// workspace is always current.
+async function activeWorkspacePath() {
+  const settings = await readSettings();
+  const ws = (settings.workspaces || []).find((w) => w.id === settings.activeWorkspaceId);
+  return ws?.path ?? null;
+}
+
+async function walkMarkdownFiles(root) {
+  // Skip dotfiles (.git, .obsidian, etc.) — mirrors buildTree's ignore rule.
+  const out = [];
+  async function walk(dir) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const e of entries) {
+      if (e.name.startsWith('.')) continue;
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) await walk(full);
+      else if (e.name.toLowerCase().endsWith('.md')) out.push(full);
+    }
+  }
+  await walk(root);
+  return out;
+}
+
+installLinkIndexBridge({
+  async resolve(basename) {
+    const ws = await activeWorkspacePath();
+    if (!ws) return { path: null, backlinks: [] };
+    const target = (basename ?? '').replace(/\.md$/i, '').trim().toLowerCase();
+    if (!target) return { path: null, backlinks: [] };
+    const files = await walkMarkdownFiles(ws);
+    let matched = null;
+    const backlinks = [];
+    for (const filePath of files) {
+      const fileBase = path.basename(filePath, path.extname(filePath)).toLowerCase();
+      if (fileBase === target) matched = filePath;
+      let content = '';
+      try { content = await fs.readFile(filePath, 'utf8'); } catch { continue; }
+      const links = parseLinks(content);
+      if (links.some((l) => l.target === target)) backlinks.push(filePath);
+    }
+    const rel = (p) => path.relative(ws, p);
+    const filteredBacklinks = backlinks.filter((p) => p !== matched);
+    return {
+      path: matched ? rel(matched) : null,
+      backlinks: filteredBacklinks.map(rel),
+    };
+  },
 });
 
 app.whenReady().then(() => {

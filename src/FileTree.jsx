@@ -4,7 +4,7 @@ import { FILE_ACTIONS } from './constants.js';
 import { beginSidebarImageDrag, endSidebarImageDrag } from './imagePaste.js';
 
 const FileTree = forwardRef(function FileTree(
-  { data, onSelect, onRename, onFileAction, onFolderAction, onMoveItems, disableDrop },
+  { data, onSelect, onRename, onFileAction, onFolderAction, onMoveItems, disableDrop, getIsBookmarked, bookmarkedPaths },
   ref,
 ) {
   const wrapRef = useRef(null);
@@ -35,6 +35,10 @@ const FileTree = forwardRef(function FileTree(
       };
       tryEdit();
     },
+    // Collapse every folder in the tree.
+    closeAll() {
+      treeRef.current?.closeAll?.();
+    },
   }), []);
 
   return (
@@ -55,7 +59,15 @@ const FileTree = forwardRef(function FileTree(
           }}
           disableDrop={disableDrop}
         >
-          {(props) => <Node {...props} onFileAction={onFileAction} onFolderAction={onFolderAction} />}
+          {(props) => (
+            <Node
+              {...props}
+              onFileAction={onFileAction}
+              onFolderAction={onFolderAction}
+              getIsBookmarked={getIsBookmarked}
+              isBookmarked={bookmarkedPaths?.has(props.node.id)}
+            />
+          )}
         </Tree>
       )}
     </div>
@@ -66,7 +78,7 @@ export default FileTree;
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
 
-function Node({ node, style, dragHandle, onFileAction, onFolderAction }) {
+function Node({ node, style, dragHandle, onFileAction, onFolderAction, getIsBookmarked, isBookmarked }) {
   const isFolder = node.isInternal;
   const isMd = !isFolder && node.data.name.toLowerCase().endsWith('.md');
   const isImage = !isFolder && IMAGE_EXT_RE.test(node.data.name);
@@ -108,7 +120,8 @@ function Node({ node, style, dragHandle, onFileAction, onFolderAction }) {
       return;
     }
 
-    const action = await window.api.showFileContextMenu({ isMd });
+    const bookmarked = getIsBookmarked ? getIsBookmarked(node.id) : !!isBookmarked;
+    const action = await window.api.showFileContextMenu({ isMd, isBookmarked: bookmarked });
     if (!action) return;
     if (action === FILE_ACTIONS.RENAME) {
       node.edit();

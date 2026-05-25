@@ -158,6 +158,173 @@ html, body, #root {
   position: relative;
 }
 
+/* Icon row pinned directly above the file tree. No background, no border —
+   left-aligned with the file/folder icon column in the tree below (not with
+   the arrow/caret column). Top padding ≥ one icon height gives the column
+   breathing room. The tree-row content places its file/folder icon at ~40px
+   from the sidebar's left edge; the toolbar icons match. */
+.sort-bar {
+  position: relative;
+  padding: 24px 8px 18px 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sort-bar-icon-btn {
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sort-bar-icon-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.sort-bar-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.sort-bar-icon-btn.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.sort-bar-icon-btn.is-active:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Bookmark quick-pick popover (right-click on the bookmark icon). */
+.bookmark-picker {
+  position: absolute;
+  top: calc(100% - 6px);
+  left: 28px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  min-width: 220px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-popover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  z-index: 70;
+}
+
+.bookmark-picker-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.bookmark-picker-item:hover { background: var(--bg-hover); }
+
+.bookmark-picker-name {
+  flex: 0 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bookmark-picker-dir {
+  flex: 1 1 auto;
+  font-size: 11px;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.bookmark-picker-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  text-align: center;
+}
+
+.sort-bar-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  border: none;
+  background: transparent;
+  color: var(--fg-secondary);
+  font-size: 11px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.sort-bar-trigger:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg-primary);
+}
+
+.sort-bar-trigger:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.sort-bar-label { white-space: nowrap; }
+
+.sort-bar-menu {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 8px;
+  min-width: 200px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-popover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  z-index: 70;
+}
+
+.sort-bar-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.sort-bar-item:hover { background: var(--bg-hover); }
+
+.sort-bar-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.sort-bar-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 4px;
+}
+
 .sidebar-resize-handle {
   position: absolute;
   top: 0;
@@ -188,7 +355,7 @@ html, body, #root {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-.tree-wrap { flex: 1; min-height: 0; padding: 24px 0 8px; }
+.tree-wrap { flex: 1; min-height: 0; padding: 4px 0 8px; }
 .tree-fill { width: 100%; height: 100%; }
 
 .tree-row {
@@ -653,7 +820,10 @@ html, body, #root {
 
 /* ---------- Empty placeholders ---------- */
 
-.empty { padding: 12px; color: var(--fg-secondary); font-size: 13px; }
+/* Empty-state text inside the file-tree wrap. Left-aligned with the file/
+   folder content column (40px from the sidebar's left edge — same offset
+   the toolbar icons and tree rows use). */
+.empty { padding: 6px 12px 6px 40px; color: var(--fg-muted); font-size: 13px; }
 .empty.centered {
   flex: 1;
   display: flex;
@@ -762,6 +932,214 @@ html, body, #root {
 }
 
 .dialog-button-destructive:hover { filter: brightness(1.05); background: #c84747; }
+
+/* ---------- Quick switcher ---------- */
+
+.quick-search-backdrop {
+  align-items: flex-start;
+  padding-top: 12vh;
+}
+
+.quick-search-panel {
+  background: var(--bg-app);
+  color: var(--fg-primary);
+  width: min(520px, 90vw);
+  border-radius: 10px;
+  box-shadow: var(--shadow-popover);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.quick-search-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg-primary);
+  padding: 14px 16px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.quick-search-input::placeholder { color: var(--fg-muted); }
+
+.quick-search-list {
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 360px;
+  overflow-y: hidden;
+}
+
+.quick-search-list.is-scroll { overflow-y: auto; }
+
+.quick-search-item {
+  display: block;
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  min-width: 0;
+}
+
+.quick-search-item.is-active { background: var(--accent-soft); }
+
+.quick-search-path {
+  display: block;
+  font-size: 13px;
+  color: var(--fg-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+}
+
+.quick-search-match {
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.quick-search-empty {
+  padding: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--fg-muted);
+}
+
+/* ---------- Journal date picker popover (react-day-picker host) ---------- */
+
+.journal-popover {
+  position: fixed;
+  z-index: 50;
+  background: var(--bg-popover);
+  color: var(--fg-primary);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--shadow-popover);
+  padding: 6px 10px;
+  user-select: none;
+  --rdp-accent-color: var(--accent);
+  --rdp-accent-background-color: var(--accent-soft);
+  --rdp-background-color: transparent;
+  --rdp-day-height: 32px;
+  --rdp-day-width: 32px;
+  --rdp-day_button-height: 28px;
+  --rdp-day_button-width: 28px;
+  --rdp-font-family: inherit;
+}
+
+.journal-popover .rdp-root {
+  color: var(--fg-primary);
+}
+
+.journal-popover .rdp-day_button:hover {
+  background: var(--bg-hover);
+}
+
+.journal-popover .rdp-today {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.journal-popover .rdp-outside {
+  color: var(--fg-muted);
+  opacity: 0.55;
+}
+
+/* ---------- Settings: shared field-row layout used by Daily Note ---------- */
+
+.settings-field-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.settings-field-row:first-of-type { border-top: none; }
+
+.settings-field-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-field-help {
+  font-size: 12px;
+  color: var(--fg-muted);
+  margin-top: 4px;
+  line-height: 1.5;
+}
+
+.settings-link {
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.settings-input {
+  width: 220px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  background: var(--bg-input);
+  color: var(--fg-primary);
+  box-sizing: border-box;
+}
+
+.settings-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-input-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+/* ---------- Folder combobox (Daily Note → New file location) ---------- */
+
+.folder-combobox {
+  position: relative;
+  width: 220px;
+}
+
+.folder-combobox .settings-input {
+  width: 100%;
+}
+
+.folder-combobox-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-popover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  z-index: 60;
+}
+
+.folder-combobox-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.folder-combobox-item:hover,
+.folder-combobox-item.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
 
 /* ---------- Inline AI modal ---------- */
 
@@ -1990,7 +2368,7 @@ html, body, #root {
   line-height: 18px;
   font-family: inherit;
   outline: none;
-  min-height: 32px;
+  min-height: 50px;  /* 2 lines of 18px + padding */
   max-height: 138px; /* ~7 lines of 18px + padding */
   overflow-y: auto;
 }
@@ -2067,8 +2445,8 @@ html, body, #root {
 }
 
 .chat-attachment-thumb {
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   border-radius: 6px;
   background-size: cover;
   background-position: center;
@@ -2076,34 +2454,36 @@ html, body, #root {
   border: 1px solid var(--border);
   cursor: pointer;
   padding: 0;
+  box-sizing: border-box;
 }
 .chat-attachment-thumb:hover { filter: brightness(0.92); }
 
 .chat-attachment-text {
-  display: inline-flex;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  max-width: 220px;
-  height: 28px;
-  padding: 0 8px;
+  justify-content: center;
+  gap: 3px;
+  width: 56px;
+  height: 56px;
+  padding: 4px;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-input);
-  font-size: 12px;
+  font-size: 10px;
+  line-height: 1.15;
   color: var(--fg-primary);
+  box-sizing: border-box;
 }
 .chat-attachment-icon { display: inline-flex; align-items: center; color: var(--fg-secondary); }
 .chat-attachment-name {
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-.chat-attachment-size {
-  color: var(--fg-secondary);
-  font-size: 11px;
-  flex-shrink: 0;
+  text-align: center;
+  width: 100%;
+  word-break: break-all;
 }
 
 .chat-attachment-remove {

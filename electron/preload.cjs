@@ -22,6 +22,11 @@ contextBridge.exposeInMainWorld('api', {
   showFolderContextMenu: () => ipcRenderer.invoke('context:folderMenu'),
   showEditorContextMenu: (opts) => ipcRenderer.invoke('context:editorMenu', opts),
   createFolder: (dirPath, name) => ipcRenderer.invoke('fs:createFolder', { dirPath, name }),
+  ensureDir: (dirPath) => ipcRenderer.invoke('fs:ensureDir', dirPath),
+  bookmarks: {
+    read: (workspacePath) => ipcRenderer.invoke('bookmarks:read', workspacePath),
+    write: (workspacePath, paths) => ipcRenderer.invoke('bookmarks:write', { workspacePath, paths }),
+  },
   renameFolder: (fromPath, toName) => ipcRenderer.invoke('fs:renameFolder', { fromPath, toName }),
   moveItem: (srcPath, destDir) => ipcRenderer.invoke('fs:moveItem', { srcPath, destDir }),
   pathExists: (p) => ipcRenderer.invoke('fs:pathExists', p),

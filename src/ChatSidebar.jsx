@@ -78,10 +78,9 @@ function AttachmentChip({ att, onRemove }) {
           aria-label={att.name}
         />
       ) : (
-        <div className="chat-attachment-text" title={att.name}>
-          <span className="chat-attachment-icon"><FileTextIcon size={12} /></span>
+        <div className="chat-attachment-text" title={`${att.name} · ${formatBytes(att.bytes)}`}>
+          <span className="chat-attachment-icon"><FileTextIcon size={18} /></span>
           <span className="chat-attachment-name">{att.name}</span>
-          <span className="chat-attachment-size">{formatBytes(att.bytes)}</span>
         </div>
       )}
       {onRemove && (
@@ -588,7 +587,7 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={onKeyDown}
           onPaste={onPaste}
-          rows={1}
+          rows={2}
         />
         <input
           ref={fileInputRef}
