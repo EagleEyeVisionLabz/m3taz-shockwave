@@ -103,21 +103,33 @@ export default function QuickSearch({ open, tree, sortOrder, workspacePath, onPi
     el?.scrollIntoView?.({ block: 'nearest' });
   }, [active, open]);
 
+  // Keyboard handler is attached once per open/close, not per keystroke.
+  // Dynamic state (results, active, callbacks) is read through refs inside
+  // the handler so this effect doesn't tear down on every render.
+  const resultsRef = useRef(results);
+  useEffect(() => { resultsRef.current = results; }, [results]);
+  const activeRef = useRef(active);
+  useEffect(() => { activeRef.current = active; }, [active]);
+  const onPickRef = useRef(onPick);
+  useEffect(() => { onPickRef.current = onPick; }, [onPick]);
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const onKey = (e) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
+      if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, resultsRef.current.length - 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
       else if (e.key === 'Enter') {
         e.preventDefault();
-        const pick = results[active];
-        if (pick) onPick(pick.file.id);
+        const pick = resultsRef.current[activeRef.current];
+        if (pick) onPickRef.current(pick.file.id);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, results, active, onPick, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

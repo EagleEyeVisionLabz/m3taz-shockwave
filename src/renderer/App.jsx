@@ -27,6 +27,7 @@ import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
+import { useSyncRef } from './hooks/useSyncRef.js';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -120,19 +121,15 @@ export default function App() {
   // on-disk file (`<workspace>/.shockwave/bookmarks.json`) stores workspace-
   // relative paths; we convert on read/write.
   const [bookmarks, setBookmarks] = useState(() => new Set());
-  const bookmarksRef = useRef(bookmarks);
-  useEffect(() => { bookmarksRef.current = bookmarks; }, [bookmarks]);
+  const bookmarksRef = useSyncRef(bookmarks);
   const [bookmarkFilterActive, setBookmarkFilterActive] = useState(false);
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
   const [hideLineNumbers, setHideLineNumbers] = useState(false);
-  const hideLineNumbersRef = useRef(false);
-  useEffect(() => { hideLineNumbersRef.current = hideLineNumbers; }, [hideLineNumbers]);
+  const hideLineNumbersRef = useSyncRef(hideLineNumbers);
   const [dailyNote, setDailyNote] = useState({ format: 'YYYY-MM-DD', folder: '' });
-  const dailyNoteRef = useRef(dailyNote);
-  useEffect(() => { dailyNoteRef.current = dailyNote; }, [dailyNote]);
+  const dailyNoteRef = useSyncRef(dailyNote);
   const [treeSortOrder, setTreeSortOrder] = useState(TREE_SORT_ORDERS.NAME_ASC);
-  const treeSortOrderRef = useRef(TREE_SORT_ORDERS.NAME_ASC);
-  useEffect(() => { treeSortOrderRef.current = treeSortOrder; }, [treeSortOrder]);
+  const treeSortOrderRef = useSyncRef(treeSortOrder);
   const sortedTree = useMemo(() => {
     const base = bookmarkFilterActive ? filterTreeToBookmarks(tree, bookmarks) : tree;
     return sortTreeNodes(base, treeSortOrder);
@@ -143,13 +140,11 @@ export default function App() {
     apiKey: '',
     skills: { global: {}, workspaces: {} },
   });
-  const codingAgentSettingsRef = useRef(codingAgentSettings);
-  useEffect(() => { codingAgentSettingsRef.current = codingAgentSettings; }, [codingAgentSettings]);
+  const codingAgentSettingsRef = useSyncRef(codingAgentSettings);
   // Global agent secrets — list of { name, description, token, createdAt, updatedAt }.
   // Tokens come from main already decrypted; persisted via the standard settings flow.
   const [agentSecrets, setAgentSecrets] = useState([]);
-  const agentSecretsRef = useRef(agentSecrets);
-  useEffect(() => { agentSecretsRef.current = agentSecrets; }, [agentSecrets]);
+  const agentSecretsRef = useSyncRef(agentSecrets);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -167,8 +162,7 @@ export default function App() {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null;
   const workspacePath = activeWorkspace?.path ?? null;
-  const workspacePathRef = useRef(workspacePath);
-  useEffect(() => { workspacePathRef.current = workspacePath; }, [workspacePath]);
+  const workspacePathRef = useSyncRef(workspacePath);
 
   // Live ref to the active file's absolute path. Used by the editor's image
   // paste/drop handler (target dir for the saved image) and the inline image
@@ -294,8 +288,7 @@ export default function App() {
     dirtyPathRef.current = newPath;
     return newPath;
   }, [activeTab, activeFile, promoteDraft, newFileDir, titleDraft, linkIndex]);
-  const ensureActiveFilePathRef = useRef(ensureActiveFilePath);
-  useEffect(() => { ensureActiveFilePathRef.current = ensureActiveFilePath; }, [ensureActiveFilePath]);
+  const ensureActiveFilePathRef = useSyncRef(ensureActiveFilePath);
 
   // ---- on editor change: schedule debounced save; promote drafts ----
   const onEditorChange = useCallback(() => {
@@ -366,8 +359,7 @@ export default function App() {
   }, [openInActiveTab, graphMode]);
 
   // ---- workspace operations ----
-  const viewModeRef = useRef(viewMode);
-  useEffect(() => { viewModeRef.current = viewMode; }, [viewMode]);
+  const viewModeRef = useSyncRef(viewMode);
 
   // 'idle' | 'saving' | 'saved' | 'error'. `idle` hides the indicator; we land
   // there 1.5s after a successful save so the badge fades out when nothing's
@@ -671,12 +663,13 @@ export default function App() {
         // Sweep up any link-index entries inside the trashed folder so
         // backlinks/graph drop them immediately (don't wait for the watcher).
         const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
-        const outgoing = linkIndex.linkIndexRef.current.getOutgoingMap();
         const affected = [];
-        for (const p of outgoing.keys()) {
+        for (const p of linkIndex.getOutgoingMap().keys()) {
           if (p.startsWith(prefix)) affected.push(p);
         }
-        for (const p of affected) linkIndex.linkIndexRef.current.removeFile(p);
+        linkIndex.mutate((idx) => {
+          for (const p of affected) idx.removeFile(p);
+        });
         closeTabsUnderPath(folderPath);
         // Clear the selected folder if it's the one we just trashed.
         if (selectedFolderPath && (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix))) {
@@ -743,10 +736,9 @@ export default function App() {
         // No-op: dropping a folder onto itself.
         if (src === destDir) continue;
         // Capture every linkIndex entry currently under this src (files + folder contents).
-        const outgoing = linkIndex.linkIndexRef.current.getOutgoingMap();
-        const insideSrc = [];
         const srcAsDir = src.endsWith('/') ? src : src + '/';
-        for (const p of outgoing.keys()) {
+        const insideSrc = [];
+        for (const p of linkIndex.getOutgoingMap().keys()) {
           if (p === src || p.startsWith(srcAsDir)) insideSrc.push(p);
         }
 
@@ -755,10 +747,15 @@ export default function App() {
 
         // For folders: the folder rename causes every nested .md path to change.
         // For files: insideSrc contains just the file itself (if it was in the index).
-        for (const oldP of insideSrc) {
+        const renames = insideSrc.map((oldP) => {
           const suffix = oldP === src ? '' : oldP.slice(srcAsDir.length);
           const newP = suffix ? (newAsDir + suffix) : newPath;
-          linkIndex.linkIndexRef.current.renameFile(oldP, newP);
+          return { oldP, newP };
+        });
+        linkIndex.mutate((idx) => {
+          for (const { oldP, newP } of renames) idx.renameFile(oldP, newP);
+        });
+        for (const { oldP, newP } of renames) {
           renameTabsPath(oldP, newP);
           affectedRenames.push({ oldPath: oldP, newPath: newP });
         }
@@ -797,22 +794,24 @@ export default function App() {
     if (isFolder) {
       try {
         // Capture nested .md paths from the index BEFORE renaming.
-        const outgoing = linkIndex.linkIndexRef.current.getOutgoingMap();
         const srcAsDir = id.endsWith('/') ? id : id + '/';
         const insideSrc = [];
-        for (const p of outgoing.keys()) {
+        for (const p of linkIndex.getOutgoingMap().keys()) {
           if (p === id || p.startsWith(srcAsDir)) insideSrc.push(p);
         }
         // Flush any pending edits before the rename invalidates the path.
         await writeNow();
         const newFolderPath = await window.api.renameFolder(id, name);
         const newAsDir = newFolderPath.endsWith('/') ? newFolderPath : newFolderPath + '/';
-        for (const oldP of insideSrc) {
+        const renames = insideSrc.map((oldP) => {
           const suffix = oldP === id ? '' : oldP.slice(srcAsDir.length);
           const newP = suffix ? (newAsDir + suffix) : newFolderPath;
-          linkIndex.linkIndexRef.current.renameFile(oldP, newP);
-          renameTabsPath(oldP, newP);
-        }
+          return { oldP, newP };
+        });
+        linkIndex.mutate((idx) => {
+          for (const { oldP, newP } of renames) idx.renameFile(oldP, newP);
+        });
+        for (const { oldP, newP } of renames) renameTabsPath(oldP, newP);
         if (selectedFolderPath === id) setSelectedFolderPath(newFolderPath);
         else if (selectedFolderPath && selectedFolderPath.startsWith(srcAsDir)) {
           setSelectedFolderPath(newAsDir + selectedFolderPath.slice(srcAsDir.length));
@@ -884,20 +883,14 @@ export default function App() {
   // would be cleared by cleanup before it could fire, and the tree would never
   // refresh for external .md adds. See the deep dive on the file-watcher
   // gotcha in CLAUDE.md → Development workflow.
-  const linkIndexRefForWatcher = useRef(linkIndex);
-  useEffect(() => { linkIndexRefForWatcher.current = linkIndex; }, [linkIndex]);
-  const refreshTreeRef = useRef(refreshTree);
-  useEffect(() => { refreshTreeRef.current = refreshTree; }, [refreshTree]);
-  const renameTabsPathRef = useRef(renameTabsPath);
-  useEffect(() => { renameTabsPathRef.current = renameTabsPath; }, [renameTabsPath]);
-  const showErrorRef = useRef(showError);
-  useEffect(() => { showErrorRef.current = showError; }, [showError]);
+  const linkIndexRefForWatcher = useSyncRef(linkIndex);
+  const refreshTreeRef = useSyncRef(refreshTree);
+  const renameTabsPathRef = useSyncRef(renameTabsPath);
+  const showErrorRef = useSyncRef(showError);
   // Watcher reads activeFile via this ref so the subscription doesn't retear
   // every time the user switches tabs.
-  const activeFileRef = useRef(activeFile);
-  useEffect(() => { activeFileRef.current = activeFile; }, [activeFile]);
-  const activeIsDraftRef = useRef(activeIsDraft);
-  useEffect(() => { activeIsDraftRef.current = activeIsDraft; }, [activeIsDraft]);
+  const activeFileRef = useSyncRef(activeFile);
+  const activeIsDraftRef = useSyncRef(activeIsDraft);
 
   useEffect(() => {
     if (!workspacePath) return undefined;
@@ -924,7 +917,7 @@ export default function App() {
         // 1) Re-key the index so subsequent events for newPath are coherent.
         li.renameFile(evt.oldPath, evt.newPath);
         // 2) Refresh outgoing links if content changed during the move (rare).
-        const stored = li.linkIndexRef.current.getMtime(evt.newPath);
+        const stored = li.getMtime(evt.newPath);
         if (stored == null || evt.mtime > stored) {
           li.applyParsedLinks(evt.newPath, evt.outgoingLinks, evt.mtime);
         }
@@ -959,7 +952,7 @@ export default function App() {
         return;
       }
       // 'add' | 'change'
-      const stored = li.linkIndexRef.current.getMtime(evt.path);
+      const stored = li.getMtime(evt.path);
       const isFresh = stored == null || evt.mtime > stored;
       if (isFresh) {
         li.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
@@ -1376,7 +1369,7 @@ export default function App() {
           <GraphView
             tree={tree}
             pageIndex={linkIndex.pageIndex}
-            outgoingByFile={linkIndex.linkIndexRef.current.getOutgoingMap()}
+            outgoingByFile={linkIndex.getOutgoingMap()}
             linkIndexVersion={linkIndex.version}
             dark={isDark}
             onOpenFile={async (id) => {

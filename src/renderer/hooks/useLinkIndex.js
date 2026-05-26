@@ -69,6 +69,18 @@ export function useLinkIndex(tree) {
     return groups.filter((g) => g.fromPath !== filePath);
   }, [pageIndex]);
 
+  // Read-only accessors — no bump needed.
+  const getOutgoingMap = useCallback(() => linkIndexRef.current.getOutgoingMap(), []);
+  const getMtime = useCallback((p) => linkIndexRef.current.getMtime(p), []);
+
+  // Batch-mutate the underlying index then bump ONCE. Use this for folder
+  // trash / move / rename loops where iterating with the per-call mutators
+  // (removeFile/renameFile) would trigger one re-render per item.
+  const mutate = useCallback((fn) => {
+    fn(linkIndexRef.current);
+    bump();
+  }, [bump]);
+
   return {
     linkIndexRef,
     pageIndex,
@@ -81,5 +93,8 @@ export function useLinkIndex(tree) {
     renameFile,
     rebuild,
     getBacklinksForFile,
+    getOutgoingMap,
+    getMtime,
+    mutate,
   };
 }

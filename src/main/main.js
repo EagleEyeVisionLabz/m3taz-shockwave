@@ -7,10 +7,10 @@ import chokidar from 'chokidar';
 import { parseLinks } from './linkParser.js';
 import { createRenameCorrelator } from './renameCorrelator.js';
 import { agentSend, agentAbort, agentReset } from './codingAgent.js';
+import { isMdFile, uniquePath, uniqueInWorkspace, walkMarkdownPaths, collectMarkdownBasenamesLower } from './pathResolver.js';
 import { getProviders, getModels } from '@earendil-works/pi-ai';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 import { installAgentTokensBridge } from './agentTokensExtension.js';
-import { installLinkIndexBridge } from './linkIndexExtension.js';
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 import {
   APP_NAME,
@@ -29,14 +29,6 @@ app.setName(APP_NAME);
 // __dirname under electron-vite is `<project>/out/main/` in dev and inside the
 // asar at runtime. Both layouts have `build/icon.png` two levels up.
 const ICON_PATH = path.join(__dirname, '..', '..', 'build', 'icon.png');
-
-// Case-insensitive markdown extension check. Single source of truth for the
-// "is this a .md file?" question across the watcher, tree walks, IPC handlers,
-// and rename logic. Previously this was written 4 different ways across 10+
-// sites in this file.
-function isMdFile(name) {
-  return typeof name === 'string' && name.toLowerCase().endsWith('.md');
-}
 
 // Pop up a native context menu and resolve with the value attached to the
 // clicked item (or null on dismiss). Items in `template` use the standard
@@ -405,110 +397,6 @@ ipcMain.handle('fs:readFile', async (_evt, filePath) => {
 ipcMain.handle('fs:writeFile', async (_evt, { filePath, content }) => {
   await fs.writeFile(filePath, content, 'utf8');
 });
-
-async function uniquePath(dirPath, base, ext) {
-  let candidate = path.join(dirPath, `${base}${ext}`);
-  let i = 1;
-  while (true) {
-    try {
-      await fs.access(candidate);
-      candidate = path.join(dirPath, `${base} ${i}${ext}`);
-      i++;
-    } catch {
-      return candidate;
-    }
-  }
-}
-
-// Walk the workspace and collect lowercased basenames (without .md) for every
-// .md file, excluding any paths in `excludePaths`. Used to enforce workspace-
-// wide name uniqueness for files (case-insensitive), since the link index is
-// keyed by basename and two files sharing a name break it.
-async function collectMarkdownBasenamesLower(root, excludePaths = new Set()) {
-  const out = new Set();
-  async function walk(dir) {
-    let entries;
-    try {
-      entries = await fs.readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      if (e.name.startsWith('.')) continue;
-      if (e.isSymbolicLink()) continue;
-      const full = path.join(dir, e.name);
-      if (excludePaths.has(full)) continue;
-      if (e.isDirectory()) {
-        await walk(full);
-      } else if (e.isFile() && isMdFile(e.name)) {
-        out.add(e.name.slice(0, -3).toLowerCase());
-      }
-    }
-  }
-  await walk(root);
-  return out;
-}
-
-// Auto-disambiguate a target path within a workspace. Appends " 1", " 2", ...
-// to the basename until the resulting file is:
-//   - not present at the literal destination path, AND
-//   - its basename (case-insensitive) is not used by any other .md file in
-//     the workspace (so the link index doesn't collapse two files into one key).
-// `excludePaths` lets the caller exempt files that are about to be renamed
-// out of the way (otherwise renaming Foo.md -> Foo.md would collide with itself).
-async function uniqueInWorkspace({ workspaceRoot, destDir, base, ext, excludePaths = [] }) {
-  const exclude = new Set(excludePaths);
-  // For folders or files outside a workspace, fall back to same-dir uniqueness.
-  if (!workspaceRoot || ext !== '.md') {
-    return uniquePath(destDir, base, ext);
-  }
-  const taken = await collectMarkdownBasenamesLower(workspaceRoot, exclude);
-  let candidateName = base;
-  let i = 1;
-  while (true) {
-    const candidatePath = path.join(destDir, `${candidateName}${ext}`);
-    let onDisk = false;
-    try {
-      await fs.access(candidatePath);
-      onDisk = !exclude.has(candidatePath);
-    } catch {
-      onDisk = false;
-    }
-    if (!onDisk && !taken.has(candidateName.toLowerCase())) {
-      return candidatePath;
-    }
-    candidateName = `${base} ${i}`;
-    i++;
-  }
-}
-
-// Recursively collect absolute paths of every .md file under `root`. If
-// `root` is itself a .md file, returns [root]. Errors (missing dir, EACCES)
-// resolve to []. Dotfiles (.git, .obsidian, .shockwave, etc.) are skipped.
-//
-// Single helper for all "find me the markdown files under X" callers:
-// collision-check exclusion (move/rename), correlator seeding, and the
-// agent's resolve_link tool.
-async function walkMarkdownPaths(root, { skipSymlinks = true } = {}) {
-  const out = [];
-  async function walk(dir) {
-    let entries;
-    try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }
-    for (const e of entries) {
-      if (e.name.startsWith('.')) continue;
-      if (skipSymlinks && e.isSymbolicLink()) continue;
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) await walk(full);
-      else if (e.isFile() && isMdFile(e.name)) out.push(full);
-    }
-  }
-  try {
-    const st = await fs.stat(root);
-    if (st.isDirectory()) await walk(root);
-    else if (isMdFile(root)) out.push(root);
-  } catch {}
-  return out;
-}
 
 // File identity helpers used by the rename correlator. Hash is computed
 // eagerly so we still have an identity when chokidar fires `unlink` (the file
@@ -1229,42 +1117,6 @@ nativeTheme.on('updated', () => {
 installAgentTokensBridge(async () => {
   const settings = await readSettings();
   return settings.agentSecrets ?? [];
-});
-
-// Install the bridge the link-index pi extension uses for resolve_link +
-// create_file. Re-reads workspace settings on every call so the active
-// workspace is always current.
-async function activeWorkspacePath() {
-  const settings = await readSettings();
-  const ws = (settings.workspaces || []).find((w) => w.id === settings.activeWorkspaceId);
-  return ws?.path ?? null;
-}
-
-
-installLinkIndexBridge({
-  async resolve(basename) {
-    const ws = await activeWorkspacePath();
-    if (!ws) return { path: null, backlinks: [] };
-    const target = (basename ?? '').replace(/\.md$/i, '').trim().toLowerCase();
-    if (!target) return { path: null, backlinks: [] };
-    const files = await walkMarkdownPaths(ws);
-    let matched = null;
-    const backlinks = [];
-    for (const filePath of files) {
-      const fileBase = path.basename(filePath, path.extname(filePath)).toLowerCase();
-      if (fileBase === target) matched = filePath;
-      let content = '';
-      try { content = await fs.readFile(filePath, 'utf8'); } catch { continue; }
-      const links = parseLinks(content);
-      if (links.some((l) => l.target === target)) backlinks.push(filePath);
-    }
-    const rel = (p) => path.relative(ws, p);
-    const filteredBacklinks = backlinks.filter((p) => p !== matched);
-    return {
-      path: matched ? rel(matched) : null,
-      backlinks: filteredBacklinks.map(rel),
-    };
-  },
 });
 
 app.whenReady().then(() => {

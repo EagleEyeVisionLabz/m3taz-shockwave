@@ -20,7 +20,7 @@ Electron app with a Vite + React 19 renderer. The renderer is a markdown-workspa
 
 ### Process boundary
 
-- **Main** (`electron/main.js`): owns the filesystem, dialogs, context menus, settings persistence, `nativeTheme`, the file watcher + rename correlator, the `app://media/...` protocol for serving workspace images, window-bounds persistence, secret encryption (Electron `safeStorage`), the pi coding-agent session (`electron/codingAgent.js`), skill-library management (`electron/skillLibrary.js`), and two pi extensions that bridge into main (`agentTokensExtension.js`, `linkIndexExtension.js`). All IPC handlers are registered here. Settings persist to `app.getPath('userData')/settings.json` via an atomic tmp+rename, serialized through a single write queue so concurrent writers (renderer + main-side window-bounds) can't race.
+- **Main** (`electron/main.js`): owns the filesystem, dialogs, context menus, settings persistence, `nativeTheme`, the file watcher + rename correlator, the `app://media/...` protocol for serving workspace images, window-bounds persistence, secret encryption (Electron `safeStorage`), the pi coding-agent session (`electron/codingAgent.js`), skill-library management (`electron/skillLibrary.js`), and the agent-tokens pi extension (`agentTokensExtension.js`). All IPC handlers are registered here. Settings persist to `app.getPath('userData')/settings.json` via an atomic tmp+rename, serialized through a single write queue so concurrent writers (renderer + main-side window-bounds) can't race.
 - **Preload** (`electron/preload.cjs`): exposes a single `window.api` surface. The renderer never touches Node — every fs/dialog/agent call goes through `window.api.*`. Also exposes `webUtils.getPathForFile` so the renderer can resolve drag-dropped folder paths (skill import).
 - **Renderer** (`src/`): React app rooted at `src/main.jsx` → `App.jsx`. Vite root is `src/` (configured in `electron.vite.config.js`'s `renderer` section); build output goes to `out/renderer/`. Built main/preload land at `out/main/index.js` and `out/preload/index.cjs`. `src/main.jsx` also installs a window-level dragover/drop preventer for `Files` drags so a stray drop outside an explicit handler doesn't navigate the renderer away to the file URL.
 
@@ -114,6 +114,51 @@ Events shipped to the renderer (via `fs:changed`):
 
 The watcher only sees inside the active workspace, and the `ignored` predicate skips any path with a dotfile segment (`.git`, `.obsidian`, `.shockwave`, etc.) — mirrors `buildTree`. The `.shockwave/` segment is how we store our own per-workspace data (bookmarks) without echoing back through the watcher.
 
+#### End-to-end pipeline
+
+The watcher is a state machine spread across `src/main/main.js` (the orchestration) and `src/main/renameCorrelator.js` (the rename pairing). The flow from chokidar event to renderer:
+
+```
+chokidar (fsevents on macOS)
+   │
+   ├── add/change/unlink/addDir/unlinkDir per path
+   ▼
+on{Chokidar}{Add,Change,Unlink}(p)
+   │
+   ├─ non-.md path? → set pendingTreeOnly = true; scheduleFlush() (150ms debounce)
+   └─ .md path? → stat ino + hash file, hand to correlator:
+                    add → correlator.onPathAppeared(p, ino, hash)
+                    change → correlator.onPathSeen(p, ino, hash); pendingByPath.set(p, 'change')
+                    unlink → correlator.onPathGone(p)  (buffered for 800ms grace)
+   ▼
+createRenameCorrelator
+   │
+   ├─ pairs `unlink(old)` + `add(new)` by inode (primary) or sha1 hash (fallback for FAT/SMB/etc.)
+   └─ emits ONE of: { type: 'rename', oldPath, newPath } | { type: 'add', path } | { type: 'unlink', path }
+        ▼
+   setupCorrelator's emit callback:
+        rename  → renameQueue.push(e); scheduleFlush()
+        unlink  → pendingByPath.set(p, 'unlink'); scheduleFlush()
+        add     → pendingByPath.set(p, prev === 'unlink' ? 'change' : 'add'); scheduleFlush()
+   ▼
+flushWatcher (fires 150ms after the first scheduleFlush since last flush)
+   │
+   ├─ renames first: read content + stat, send {type:'rename', oldPath, newPath, mtime, outgoingLinks}
+   ├─ then per-path entries: unlink → send {type:'unlink', path}; add/change → read + parse + send
+   └─ if treeOnly + nothing else: send {type:'tree'}
+        ▼
+win.webContents.send('fs:changed', evt)  →  renderer's onFsChanged
+```
+
+Key invariants the pipeline depends on:
+
+1. **The watcher windowId is captured at `watchStart`.** Subsequent flushes target that window via `BrowserWindow.fromId(watcherWindowId)`. If the window is destroyed and re-created (full reload), the watcher must be restarted to pick up the new id.
+2. **Coalescing key is the path.** Multiple events for the same path within the 150ms window collapse to the latest type, with one special case: `unlink → add` for the same path collapses to `change` (atomic save pattern from vim/VS Code).
+3. **The rename correlator buffers unlinks for `RENAME_GRACE_MS` (800ms).** If a paired add arrives in that window with matching inode or content hash, it's emitted as `rename` instead of separate unlink+add. After the grace period, buffered unlinks become real unlinks.
+4. **Renames go through `renameQueue`, not `pendingByPath`.** They're already paired events and shouldn't be merged with per-path bursts.
+5. **Self-echo guard is mtime-based.** The renderer's in-app writes use `Date.now()` for the in-memory mtime; the watcher's echo carries the file's real `stat.mtimeMs`, which is ≤ the renderer's stored mtime, so the renderer skips it. See invariant #6 in "Invariants when touching files/links" above.
+6. **Seeding runs synchronously on `watchStart`.** Every `.md` under the root is stat'd + sha1'd before chokidar starts firing events. Without this, an unlink fired immediately after startup couldn't be correlated (we'd have no prior identity to match against).
+
 **Renderer-side discipline (the bug this prevents):** the `fs:changed` listener in `App.jsx` subscribes once per `workspacePath` and accesses every dependency (`linkIndex`, `refreshTree`, `renameTabsPath`, `showError`, `activeFile`, `activeIsDraft`) via refs. Do NOT add `linkIndex` (or any per-render object) to the listener's `useEffect` deps. The handlers call `linkIndex.bump()` synchronously, which triggers a re-render; if the effect re-ran on that, its cleanup would clear the 80ms `refreshTimer` set inside the listener, and external `.md` adds would silently never refresh the sidebar. In-app file operations call `fileOps.treeAndIndexChanged()` directly AND get echoed by the watcher, so they paper over watcher bugs; external changes (terminal, pi coding agent, other apps) rely solely on this path. If external changes stop updating the sidebar, the listener-churn pattern is the first place to look.
 
 ### Cross-process constants to keep in sync
@@ -157,11 +202,10 @@ Right-side chat sidebar (`src/ChatSidebar.jsx`) backed by `@earendil-works/pi-co
 - **Main side** (`electron/codingAgent.js`): keeps **one** pi `AgentSession` at a time, keyed by `(workspacePath, provider, model, apiKey, effectiveSystemPrompt)`. The next `agent:send` whose key differs from the stored one tears down the previous session and creates a new one — there is no eager invalidation on settings change, only lazy reconciliation on the next send. `app.on('before-quit')` calls `agentReset()` to abort cleanly.
 - **System prompt**: `electron/agentSystemPrompt.js` exports `DEFAULT_AGENT_SYSTEM_PROMPT`, which is pre-filled into `codingAgent.systemPrompt` on first install and writable from Settings → Agent Chat. An empty/whitespace value falls back to the default at session boot. Pi's default coding-agent prompt is overridden via a custom `DefaultResourceLoader` with `systemPromptOverride`. The renderer fetches the current default via `agent:getDefaultSystemPrompt` for the "Reset to default" button.
 - **Skills** (`electron/skillLibrary.js`): on-disk library at `<userData>/pi-agent/skill-library/<skill-name>/SKILL.md` (one folder per skill). Pi never auto-discovers this directory. Each session boot we recompute the effective enabled list (`computeEffectivePaths`: workspace override wins over global; `inherit` falls back to global) and write it as `skills: []` to `<userData>/pi-agent/settings.json` via `writePiSettings`. Pi reads `skills` only at session boot — the user can hit Clear in the chat to apply a changed set.
-- **Extensions** (also via `<agentDir>/settings.json` `extensions: []`): two are always loaded.
+- **Extensions** (also via `<agentDir>/settings.json` `extensions: []`):
   - **`electron/agentTokensExtension.js`** — exposes `list_agent_secrets` + `get_agent_secret` tools so the agent can look up user-managed API tokens. The on-disk extension file is plain JS with no imports — it talks back to main through a process-global bridge (`global.__SHOCKWAVE_AGENT_TOKENS`) installed by `installAgentTokensBridge` at startup. The bridge re-reads settings on every call so user-side edits to secrets are picked up mid-conversation.
-  - **`electron/linkIndexExtension.js`** — exposes `resolve_link` (basename → workspace-relative path + backlinks) so the agent can answer "where is `[[Foo]]`?" with one tool call instead of `find` + `grep`. Same bridge pattern (`global.__SHOCKWAVE_LINK_INDEX` installed by `installLinkIndexBridge`).
 
-  Both extension source strings are materialized fresh on every session boot via `ensureAgentTokensExtension` / `ensureLinkIndexExtension`, so editing the source in this repo and restarting the app picks up the change without any user-side install step. The reason for the bridge pattern: the extension file lives under `<userData>/pi-agent/extensions/` (outside this project), and node's resolver can't find `electron` from there; writing decrypted secrets to disk would defeat the `safeStorage` encryption; pi runs in the same V8 isolate as main so a `global` function is the cleanest bridge.
+  The extension source string is materialized fresh on every session boot via `ensureAgentTokensExtension`, so editing the source in this repo and restarting the app picks up the change without any user-side install step. The reason for the bridge pattern: the extension file lives under `<userData>/pi-agent/extensions/` (outside this project), and node's resolver can't find `electron` from there; writing decrypted secrets to disk would defeat the `safeStorage` encryption; pi runs in the same V8 isolate as main so a `global` function is the cleanest bridge.
 - **IPC**: renderer → `agent:send({ text, images })`, `agent:abort()`, `agent:reset()`, `agent:getDefaultSystemPrompt()`. Main reads workspace + `codingAgent` settings, forwards every pi event to the renderer as `agent:event` and surfaces failures as `agent:error`. The agent runs with the **active workspace as `cwd`**, and uses an in-memory `AuthStorage` + `SessionManager` (sessions do not survive an app restart).
 - **Failed-image guard**: pi pushes a user message into `state.messages` before the API call and a failure assistant message after, so a provider error (e.g. image too large) leaves both stuck in context to re-poison every subsequent turn. `codingAgent.js`'s `agentSend` wraps the emit callback to detect the failure on `agent_end`, splices the bad pair out of pi's in-memory state, and emits a synthetic `agent_send_failed` event so the renderer can drop the matching transcript entry from its UI.
 - **Event protocol consumed by the sidebar**: `agent_start` / `agent_end` gate the running state. `turn_end` carries pi's normalized `usage` (we sum `totalTokens` across turns; each turn re-pays for context so the sum matches billed usage). `message_update` carries `assistantMessageEvent` which is either `text_start` (open a new assistant bubble) or `text_delta` (append to current bubble). `tool_execution_start` / `tool_execution_update` / `tool_execution_end` build collapsible tool entries keyed by `toolCallId`. Assistant text is rendered through `react-markdown` + `remark-gfm`. The sidebar also runs an elapsed-time ticker and a shimmer "Working" indicator while pi is running.
