@@ -14,6 +14,7 @@ import ErrorMessage from './ErrorMessage.jsx';
 import EditorStatusBar from './EditorStatusBar.jsx';
 import ChatSidebar from './ChatSidebar.jsx';
 import Dialog from './Dialog.jsx';
+import ConfirmDialog from './ConfirmDialog.jsx';
 import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
 import { formatDailyNote, resolveDailyNotePath } from './dailyNote.js';
@@ -158,6 +159,7 @@ export default function App() {
   const chatSidebarWidthRef = useRef(360);
   const [viewMode, setViewMode] = useState(VIEW_MODES.LIVE);
   const [editorStats, setEditorStats] = useState({ words: 0, chars: 0 });
+  const [editorHistory, setEditorHistory] = useState({ canUndo: false, canRedo: false });
   const [saveState, setSaveState] = useState(SAVE_STATES.SAVED);
   // Pending "Send to Agent" payload waiting on the Replace/Append decision.
   // Non-null only while the collision dialog is open.
@@ -215,27 +217,73 @@ export default function App() {
   const [pendingComposerInjection, setPendingComposerInjection] = useState(null);
 
   // ---- save lifecycle (stays in App, crosses concerns) ----
-  const dirtyPathRef = useRef(null);
+  // dirtyTabIdRef holds the tab id that needs flushing. For drafts (no path
+  // yet) writeNow creates the file using titleDraft (or "Untitled") at the
+  // moment of save; for real files it writes through. Per-tab in-flight guard
+  // coalesces concurrent calls so two near-simultaneous saves can't both fire
+  // createFile and leave an orphan disambiguated file behind.
+  const dirtyTabIdRef = useRef(null);
   const saveTimerRef = useRef(null);
+  const writeInFlightRef = useRef(new Map());
+  // Forward refs filled below by useSyncRef once useTabs/newFileDir exist.
+  const tabsRef = useRef([]);
+  const activeTabIdRef = useRef(null);
+  const titleDraftRef = useSyncRef(titleDraft);
+  const newFileDirRef = useRef(() => null);
+  const promoteTabPathRef = useRef(() => {});
 
   const linkIndex = useLinkIndex(tree);
 
+  // Returns the absolute path that was saved (the new path for a draft, or the
+  // existing path for a real file), or null if nothing was dirty / save failed.
   const writeNow = useCallback(async () => {
-    const path = dirtyPathRef.current;
-    if (!path) return;
-    dirtyPathRef.current = null;
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = null;
+    const tabId = dirtyTabIdRef.current;
+    if (!tabId) return null;
+    const existing = writeInFlightRef.current.get(tabId);
+    if (existing) return existing;
+    const work = (async () => {
+      dirtyTabIdRef.current = null;
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      const editor = editorRef.current;
+      if (!editor) return null;
+      const tab = tabsRef.current.find((t) => t.id === tabId);
+      if (!tab) return null;
+      const text = editor.getText();
+      try {
+        let path;
+        if (tab.isDraft) {
+          // Only trust titleDraft when the dirty tab is also the active tab;
+          // for any other tab (background flush during switch) fall back.
+          const candidate = tabId === activeTabIdRef.current ? (titleDraftRef.current || '') : '';
+          const name = (candidate || 'Untitled').replace(/\.md$/i, '').trim() || 'Untitled';
+          const targetDir = newFileDirRef.current();
+          if (!targetDir) throw new Error('No active workspace');
+          path = await window.api.createFile(targetDir, `${name}.md`, text);
+          promoteTabPathRef.current(tabId, path);
+        } else {
+          path = tab.path;
+          await window.api.writeFile(path, text);
+        }
+        linkIndex.updateFile(path, text);
+        if (dirtyTabIdRef.current === null) setSaveState(SAVE_STATES.SAVED);
+        return path;
+      } catch (err) {
+        // Re-arm dirty so the next edit/save attempt retries this tab.
+        dirtyTabIdRef.current = tabId;
+        showError(err.message ?? String(err));
+        return null;
+      }
+    })();
+    writeInFlightRef.current.set(tabId, work);
+    try {
+      return await work;
+    } finally {
+      writeInFlightRef.current.delete(tabId);
     }
-    const editor = editorRef.current;
-    if (!editor) return;
-    const text = editor.getText();
-    await window.api.writeFile(path, text);
-    linkIndex.updateFile(path, text);
-    // Only flip to "saved" if nothing else dirtied the path while we were writing.
-    if (dirtyPathRef.current === null) setSaveState(SAVE_STATES.SAVED);
-  }, [linkIndex]);
+  }, [linkIndex, showError]);
 
   // ---- tabs (drafts live here) ----
   const onAfterSwitch = useCallback(() => {
@@ -245,7 +293,13 @@ export default function App() {
   const tabsApi = useTabs({ editorRef, writeNow, onAfterSwitch });
   const { activeFile, activeIsDraft, activeTab, openInActiveTab, openInNewTab, addDraftTab,
           switchTab, closeTab, closeTabsForPath, closeTabsUnderPath, renameTabsPath, resetTabs,
-          promoteDraft, tabs, activeTabId, goBack, goForward, canGoBack, canGoForward } = tabsApi;
+          promoteTabPath, tabs, activeTabId, goBack, goForward, canGoBack, canGoForward } = tabsApi;
+
+  // Keep writeNow's refs current. writeNow itself is a stable closure declared
+  // above; these effects feed it the freshest tab state and helpers.
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+  useEffect(() => { activeTabIdRef.current = activeTabId; }, [activeTabId]);
+  useEffect(() => { promoteTabPathRef.current = promoteTabPath; }, [promoteTabPath]);
 
   useEffect(() => {
     activeFilePathRef.current = activeIsDraft ? null : activeFile;
@@ -254,73 +308,44 @@ export default function App() {
   const onBack = useCallback(() => { if (activeTabId) goBack(activeTabId); }, [activeTabId, goBack]);
   const onForward = useCallback(() => { if (activeTabId) goForward(activeTabId); }, [activeTabId, goForward]);
 
-  // Where a new file should be created when promoting a draft.
-  // Priority: explicitly selected folder → dir of the active file → vault root.
+  // Where a new file should be created when saving a draft for the first time.
+  // Priority: explicitly selected folder → dir of the active file → workspace root.
   const newFileDir = useCallback(() => {
     if (selectedFolderPath) return selectedFolderPath;
     if (activeFile) return dirOf(activeFile);
     return workspacePath;
   }, [selectedFolderPath, activeFile, workspacePath]);
+  useEffect(() => { newFileDirRef.current = newFileDir; }, [newFileDir]);
 
-  // Resolve an absolute file path for write-side image operations. If the
-  // active tab is a draft, promote it on the spot (same flow as the keystroke
-  // promotion in onEditorChange) so the dropped image has a real folder to
-  // land in. Returns null when there's no active tab.
-  // After we promote a draft, the load effect (keyed on activeFile) fires and
-  // would normally readFile from disk + setContent — wiping the buffer (which
-  // is about to receive an image insertion after the await). This ref lets the
-  // load effect know "this path was just promoted, buffer is authoritative,
-  // skip the disk read." Cleared by the load effect after one cycle.
-  const freshlyPromotedPathRef = useRef(null);
-  const ensureActiveFilePath = useCallback(async () => {
+  // For image paste/drop: ensure the active tab has a real file path. If it's
+  // a draft, force a save now (which creates the file via writeNow's draft
+  // branch). Returns the resolved absolute path, or null if there's no active
+  // tab. Used by the editor's image plugin to know where to write the image.
+  const flushDraftToDisk = useCallback(async () => {
     if (!activeTab) return null;
     if (!activeTab.isDraft) return activeFile;
-    const editor = editorRef.current;
-    const currentText = editor?.getText() ?? '';
-    // Write the buffer to disk as the file's initial content so disk == buffer
-    // at the moment of promotion. The load-effect skip below is the belt; this
-    // is the suspenders.
-    const newPath = await promoteDraft(activeTab.id, newFileDir(), {
-      name: titleDraft || 'Untitled',
-      initialContent: currentText,
-    });
-    freshlyPromotedPathRef.current = newPath;
-    linkIndex.updateFile(newPath, currentText);
-    // Mark dirty so the buffer (which may have unsaved typing alongside the
-    // image drop) gets flushed by the next writeNow tick.
-    dirtyPathRef.current = newPath;
+    dirtyTabIdRef.current = activeTab.id;
+    const newPath = await writeNow();
+    // Push the new path into activeFilePathRef synchronously so the image
+    // widget's decoration pass (which runs on the upcoming view.dispatch's
+    // docChanged) can resolve the image's relative URL. Without this, the ref
+    // is still null when the decoration computes (the effect that mirrors
+    // activeFile into the ref hasn't fired yet — React hasn't committed the
+    // setTabs from promoteTabPath), so the image stays as raw text until the
+    // next docChange triggers another decoration pass.
+    if (newPath) activeFilePathRef.current = newPath;
     return newPath;
-  }, [activeTab, activeFile, promoteDraft, newFileDir, titleDraft, linkIndex]);
-  const ensureActiveFilePathRef = useSyncRef(ensureActiveFilePath);
+  }, [activeTab, activeFile, writeNow]);
+  const flushDraftToDiskRef = useSyncRef(flushDraftToDisk);
 
-  // ---- on editor change: schedule debounced save; promote drafts ----
+  // ---- on editor change: schedule debounced save ----
   const onEditorChange = useCallback(() => {
     if (!activeTab) return;
     setSaveState(SAVE_STATES.UNSAVED);
-    if (activeTab.isDraft) {
-      // Promote then schedule a save against the new path.
-      (async () => {
-        try {
-          const editor = editorRef.current;
-          const currentText = editor?.getText() ?? '';
-          const newPath = await promoteDraft(activeTab.id, newFileDir(), {
-            name: titleDraft || 'Untitled',
-            initialContent: '',
-          });
-          linkIndex.updateFile(newPath, currentText);
-          dirtyPathRef.current = newPath;
-          if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-          saveTimerRef.current = setTimeout(() => writeNow(), SAVE_DEBOUNCE_MS);
-        } catch (err) {
-          showError(err.message ?? String(err));
-        }
-      })();
-      return;
-    }
-    dirtyPathRef.current = activeFile;
+    dirtyTabIdRef.current = activeTab.id;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => writeNow(), SAVE_DEBOUNCE_MS);
-  }, [activeTab, activeFile, writeNow, promoteDraft, newFileDir, titleDraft, linkIndex, showError]);
+  }, [activeTab, writeNow]);
 
   // ---- refresh tree ----
   const refreshTree = useCallback(async () => {
@@ -347,10 +372,24 @@ export default function App() {
 
   // ---- tree selection ----
   // Folders set selectedFolderPath (used as target dir for new files).
-  // Files clear it and open in the active tab.
+  // Files clear it and open in the active tab — BUT only on a true single-row
+  // click. A multi-row selection (Cmd/Shift+click building up a set of files
+  // for a bulk action) must NOT auto-open anything, or every Cmd+click would
+  // swap the editor's content.
   const onSelect = useCallback(async (nodes) => {
+    if (nodes.length === 0) {
+      // Tree-selection cleared (clicked empty space, etc). Match the visual
+      // state — without this, selectedFolderPath would stay set and the next
+      // new file would land in a folder the user no longer thinks is "selected".
+      setSelectedFolderPath(null);
+      return;
+    }
+    if (nodes.length > 1) {
+      // Multi-select: don't auto-open and don't reinterpret selectedFolderPath.
+      setSelectedFolderPath(null);
+      return;
+    }
     const node = nodes[0];
-    if (!node) return;
     if (node.children) {
       setSelectedFolderPath(node.id);
       return;
@@ -541,6 +580,25 @@ export default function App() {
     }
   }, [workspacePath, showError]);
 
+  // Force every path in `paths` to bookmarked === `desired`. One write to disk
+  // for the whole batch (a loop of toggleBookmark would write N times).
+  const setBookmarksForPaths = useCallback(async (paths, desired) => {
+    if (!workspacePath || !paths || paths.length === 0) return;
+    const next = new Set(bookmarksRef.current);
+    for (const p of paths) {
+      if (desired) next.add(p);
+      else next.delete(p);
+    }
+    setBookmarks(next);
+    bookmarksRef.current = next;
+    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    try {
+      await window.api.bookmarks.write(workspacePath, rels);
+    } catch (err) {
+      showError(`Failed to save bookmarks: ${err.message ?? err}`);
+    }
+  }, [workspacePath, showError]);
+
   // Rewrite a single path inside the bookmark set (used by rename flows).
   // No write here — caller batches and persists once.
   const renameBookmarkPath = useCallback((oldPath, newPath) => {
@@ -576,21 +634,73 @@ export default function App() {
     }
   }, [workspacePath]);
 
-  // Intercept the bookmark-toggle action so we don't pollute useFileOps with
-  // it; delegate everything else to the original handler.
-  const onFileActionWithBookmarks = useCallback((action, filePath) => {
+  // Bulk-delete confirmation state. Set by the action wrapper when DELETE
+  // arrives with >1 path; the ConfirmDialog renders below.
+  const [bulkDeleteCandidates, setBulkDeleteCandidates] = useState(null);
+
+  // Action wrapper around fileOps.onFileAction. Two responsibilities:
+  // 1) Handle TOGGLE_BOOKMARK (kept here so useFileOps stays bookmark-free).
+  // 2) Handle multi-path actions — FileTree passes an array of paths from a
+  //    right-click on a multi-selection. Single-target actions (DUPLICATE,
+  //    REVEAL, RENAME) collapse to the first path; bulk-safe actions
+  //    (TOGGLE_BOOKMARK, DELETE, NEW_TAB) fan out.
+  const onFileActionWithBookmarks = useCallback((action, filePathOrPaths) => {
+    const paths = Array.isArray(filePathOrPaths) ? filePathOrPaths : [filePathOrPaths];
+    if (paths.length === 0) return;
+
     if (action === FILE_ACTIONS.TOGGLE_BOOKMARK) {
-      toggleBookmark(filePath);
+      if (paths.length === 1) {
+        toggleBookmark(paths[0]);
+      } else {
+        // Mirror the menu label: if all selected files are bookmarked, the user
+        // saw "Remove N bookmarks" — clear them. Otherwise they saw
+        // "Bookmark N files" — set them all bookmarked.
+        const allBookmarked = paths.every((p) => bookmarksRef.current.has(p));
+        setBookmarksForPaths(paths, !allBookmarked);
+      }
       return;
     }
-    fileOps.onFileAction(action, filePath);
-  }, [fileOps, toggleBookmark]);
+
+    if (action === FILE_ACTIONS.DELETE && paths.length > 1) {
+      // Bulk delete: skip per-file OS confirms, show one renderer-side confirm.
+      setBulkDeleteCandidates(paths);
+      return;
+    }
+
+    if (action === FILE_ACTIONS.NEW_TAB && paths.length > 1) {
+      for (const p of paths) fileOps.onFileAction(action, p);
+      return;
+    }
+
+    // Single-target actions: act on the first path.
+    fileOps.onFileAction(action, paths[0]);
+  }, [fileOps, toggleBookmark, setBookmarksForPaths]);
+
+  const cancelBulkDelete = useCallback(() => setBulkDeleteCandidates(null), []);
+  const confirmBulkDelete = useCallback(async () => {
+    const paths = bulkDeleteCandidates;
+    setBulkDeleteCandidates(null);
+    if (!paths) return;
+    try {
+      const trashed = await window.api.trashFiles(paths);
+      for (const p of trashed) {
+        closeTabsForPath(p);
+        linkIndex.removeFile(p);
+      }
+      if (trashed.length > 0) await fileOps.treeAndIndexChanged();
+    } catch (err) {
+      showError(err.message ?? String(err));
+    }
+  }, [bulkDeleteCandidates, closeTabsForPath, linkIndex, fileOps, showError]);
 
   const onToggleViewMode = useCallback(async () => {
     const next = viewMode === VIEW_MODES.LIVE ? VIEW_MODES.RAW : VIEW_MODES.LIVE;
     setViewMode(next);
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, viewMode: next });
   }, [viewMode, persistSettings, workspaces, activeWorkspaceId, themeMode]);
+
+  const onUndo = useCallback(() => { editorRef.current?.undo(); }, []);
+  const onRedo = useCallback(() => { editorRef.current?.redo(); }, []);
 
   const onCodingAgentChange = useCallback(async (next) => {
     setCodingAgentSettings(next);
@@ -610,27 +720,25 @@ export default function App() {
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, transcription: next });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
-  // ---- title commit (rename existing or promote draft) ----
+  // ---- title commit (rename existing or save draft with this name) ----
   const onTitleCommit = useCallback(async (newName) => {
     if (!activeTab) return;
     if (activeTab.isDraft) {
-      try {
-        const editor = editorRef.current;
-        const text = editor?.getText() ?? '';
-        const newPath = await promoteDraft(activeTab.id, newFileDir(), {
-          name: newName,
-          initialContent: text,
-        });
-        linkIndex.updateFile(newPath, text);
-        await fileOps.treeAndIndexChanged();
-      } catch (err) {
-        showError(err.message ?? String(err));
-      }
+      // Sync the ref synchronously so writeNow (running in this same tick)
+      // sees the committed name; setTitleDraft alone wouldn't propagate to
+      // titleDraftRef before writeNow reads it.
+      titleDraftRef.current = newName;
+      setTitleDraft(newName);
+      dirtyTabIdRef.current = activeTab.id;
+      await writeNow();
+      // Refresh the tree right away — the watcher echo would also do this,
+      // but we want snappy UI when the user explicitly named the file.
+      await fileOps.treeAndIndexChanged();
       return;
     }
     if (!activeFile) return;
     await fileOps.performRename(activeFile, newName);
-  }, [activeTab, activeFile, newFileDir, linkIndex, promoteDraft, fileOps, showError]);
+  }, [activeTab, activeFile, writeNow, fileOps, titleDraftRef]);
 
   // ---- graph toggle ----
   const onToggleGraph = useCallback(async () => {
@@ -1097,20 +1205,32 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- effect: load the active file's content into the editor whenever activeFile or draft state changes ----
+  // ---- effect: load the active file's content into the editor ----
+  // Tracks the last (tabId, path, isDark) we loaded into the editor. The
+  // important case: when a draft is saved, the tab keeps its id but its path
+  // flips from null to a real path. That is NOT a content load — the buffer
+  // already holds the authoritative content (we just wrote it to disk). Same
+  // tab, last path was null → skip the disk read. Tab switches, back/forward,
+  // open-in-active-tab, theme toggles, and workspace switches all still load
+  // because tabId / path / isDark differ.
+  const lastLoadRef = useRef({ tabId: null, path: null, isDark: null });
   useEffect(() => {
     if (!workspacePath) return;
     const editor = editorRef.current;
     if (!editor) return;
+    const last = lastLoadRef.current;
     if (activeIsDraft || !activeFile) {
       editor.setContent('', null);
+      lastLoadRef.current = { tabId: activeTabId, path: null, isDark };
       return;
     }
-    // Skip the disk read for paths just promoted from a draft — the buffer
-    // already holds the authoritative content (and may be about to receive an
-    // image insertion from the paste/drop handler).
-    if (freshlyPromotedPathRef.current === activeFile) {
-      freshlyPromotedPathRef.current = null;
+    // Promotion: same tab, previously had no path. Buffer is authoritative.
+    if (last.tabId === activeTabId && last.path === null && last.isDark === isDark) {
+      lastLoadRef.current = { tabId: activeTabId, path: activeFile, isDark };
+      return;
+    }
+    // Already loaded.
+    if (last.tabId === activeTabId && last.path === activeFile && last.isDark === isDark) {
       return;
     }
     let cancelled = false;
@@ -1122,12 +1242,13 @@ export default function App() {
         if (!ed) return;
         const vs = tabsApi.viewStateByPath.current.get(activeFile) ?? null;
         ed.setContent(text, vs);
+        lastLoadRef.current = { tabId: activeTabId, path: activeFile, isDark };
       } catch (err) {
         if (!cancelled) showError(err.message ?? String(err));
       }
     })();
     return () => { cancelled = true; };
-  }, [activeFile, activeIsDraft, workspacePath, isDark, tabsApi.viewStateByPath, showError]);
+  }, [activeFile, activeIsDraft, activeTabId, workspacePath, isDark, tabsApi.viewStateByPath, showError]);
 
   // ---- backlinks for active file ----
   const activeBacklinks = useMemo(
@@ -1428,8 +1549,9 @@ export default function App() {
                   onImageError={showError}
                   onRequestUrl={requestUrl}
                   onSendToAgent={onSendToAgent}
-                  ensureActiveFilePathRef={ensureActiveFilePathRef}
+                  flushDraftToDiskRef={flushDraftToDiskRef}
                   onStats={setEditorStats}
+                  onHistory={setEditorHistory}
                   dark={isDark}
                   viewMode={viewMode}
                   hideLineNumbers={hideLineNumbers}
@@ -1458,6 +1580,10 @@ export default function App() {
                 viewMode={viewMode}
                 onToggleViewMode={onToggleViewMode}
                 saveState={saveState}
+                canUndo={editorHistory.canUndo}
+                canRedo={editorHistory.canRedo}
+                onUndo={onUndo}
+                onRedo={onRedo}
               />
             )}
           </>
@@ -1516,6 +1642,20 @@ export default function App() {
           initialText={urlPromptOpts.initialText}
         />
       )}
+
+      <ConfirmDialog
+        open={!!bulkDeleteCandidates}
+        title="Delete files"
+        message={
+          bulkDeleteCandidates
+            ? `Move ${bulkDeleteCandidates.length} files to the Trash? This cannot be undone from inside the app.`
+            : ''
+        }
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmBulkDelete}
+        onClose={cancelBulkDelete}
+      />
 
       <Dialog
         open={!!sendToAgentPending}

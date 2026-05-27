@@ -14,6 +14,29 @@ import {
 import { useVoiceInput } from './voice/useVoiceInput.js';
 import { VoiceBars } from './voice/VoiceBars.jsx';
 
+// Override <a> rendering in react-markdown so left-click on a link in an
+// assistant message opens the URL in the system browser instead of navigating
+// the renderer (which would blank the app — there's no chrome to navigate
+// back). Main also installs a will-navigate guard as a safety net, but this
+// is the UX-correct path. Exported as a module-level constant so the prop
+// reference is stable and MessageRow's memo isn't invalidated.
+const MARKDOWN_COMPONENTS = {
+  a: ({ href, children, ...rest }) => (
+    <a
+      {...rest}
+      href={href}
+      onClick={(e) => {
+        e.preventDefault();
+        if (typeof href === 'string' && /^https?:\/\//i.test(href)) {
+          window.api.openExternal(href);
+        }
+      }}
+    >
+      {children}
+    </a>
+  ),
+};
+
 // Build a short, human-readable summary line for a tool call.
 function toolSummary(toolName, args) {
   const a = args ?? {};
@@ -185,7 +208,7 @@ const MessageRow = memo(function MessageRow({ message: m }) {
     return (
       <div className="chat-message chat-assistant">
         <div className="chat-bubble chat-markdown">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={MARKDOWN_COMPONENTS}>{m.text}</ReactMarkdown>
         </div>
       </div>
     );

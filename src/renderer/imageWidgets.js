@@ -1,28 +1,29 @@
 // Inline image rendering for the markdown editor.
 //
-// Canonical CodeMirror 6 pattern from https://codemirror.net/examples/decoration/:
-//   MatchDecorator     — finds `![alt](url)` ranges by regex and maintains
-//                        the decoration set incrementally across edits.
-//   Decoration.replace — atomically replaces the matched source with a widget.
-//   atomicRanges       — cursor navigation skips over the widget as one unit.
+// Walks the syntax tree (same pattern as `markdownLinks.js`) and emits a
+// `Decoration.replace` widget for each `![alt](url)` whose range does NOT
+// overlap the current selection. When the cursor enters the image's range,
+// the decoration is skipped on the next rebuild and the raw markdown reveals
+// so the user can edit it — same convention as the other live-preview
+// decorations in this codebase.
 //
-// The widget shows an <img> served by the `app://media/<rel-to-vault>` protocol
-// (registered in electron/main.js). URLs that resolve outside the vault, or
-// can't be parsed, fall through to no decoration (source stays visible).
-//
-// Decorations rebuild only on docChanged || viewportChanged (per the official
-// example) — NOT on selectionSet. That's deliberate; selection-driven rebuilds
-// cause cursor jitter and interact badly with other decoration extensions.
+// Why not `MatchDecorator` anymore: that helper only rebuilds on docChanged /
+// viewportChanged. Cursor-aware reveal needs `selectionSet` too. The earlier
+// version warned about "cursor jitter" from selection-driven rebuilds, but
+// `markdownLinks.js` does exactly this without trouble, so the warning was
+// stale.
 
 import {
   Decoration,
   EditorView,
-  MatchDecorator,
   ViewPlugin,
   WidgetType,
 } from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 import { dirOf } from './pathUtils.js';
+
+const IMAGE_RE = /!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g;
 
 class ImageWidget extends WidgetType {
   constructor(url, alt, linkUrl) {
@@ -59,7 +60,12 @@ class ImageWidget extends WidgetType {
     return wrap;
   }
   ignoreEvent(event) {
-    // Let the widget receive its own mouse events so the link click handler runs.
+    // Linked images need the widget to receive mousedown/click so its handler
+    // can open the URL. Plain images have no widget-side handler, so let CM
+    // treat the event as if the widget weren't there — that places the cursor
+    // adjacent to the widget on a single click (otherwise the user has to
+    // double-click to get a cursor there).
+    if (!this.linkUrl) return true;
     return event.type !== 'mousedown' && event.type !== 'click';
   }
 }
@@ -70,7 +76,6 @@ function findWrappingLinkUrl(state, pos) {
   let node = tree.resolveInner(pos, 1);
   while (node) {
     if (node.name === 'Link') {
-      // Look for a URL child.
       let c = node.firstChild;
       while (c) {
         if (c.name === 'URL') return state.doc.sliceString(c.from, c.to);
@@ -83,10 +88,9 @@ function findWrappingLinkUrl(state, pos) {
   return null;
 }
 
-
 // Resolve a markdown image URL to a loadable src. Returns null when the path
-// resolves outside the vault — those stay as plain text rather than render
-// something the protocol handler will 403 anyway.
+// resolves outside the workspace — those stay as plain text rather than
+// render something the protocol handler will 403 anyway.
 function resolveImageUrl(raw, activeDir, vault) {
   if (!raw) return null;
   const trimmed = raw.trim();
@@ -110,31 +114,58 @@ function resolveImageUrl(raw, activeDir, vault) {
   return 'app://media/' + rel.split('/').map(encodeURIComponent).join('/');
 }
 
-export function imageWidgets(getActiveFilePath, getVaultPath) {
-  const matcher = new MatchDecorator({
-    // `![alt](url)` — alt may be empty, url disallows `)` and whitespace
-    // (CommonMark spec); optional `"title"` after the url is stripped.
-    regexp: /!\[([^\]]*)\]\(([^\s)]+)(?:\s+"[^"]*")?\)/g,
-    decoration: (match, view, matchPos) => {
-      const alt = match[1];
-      const rawUrl = match[2];
-      const activePath = getActiveFilePath();
-      const vault = getVaultPath();
-      const src = resolveImageUrl(rawUrl, dirOf(activePath || ''), vault);
-      if (!src) return null;
-      const linkUrl = findWrappingLinkUrl(view.state, matchPos);
-      return Decoration.replace({ widget: new ImageWidget(src, alt, linkUrl) });
-    },
-  });
+function buildDecorations(view, getActiveFilePath, getVaultPath) {
+  const builder = new RangeSetBuilder();
+  const state = view.state;
+  const ranges = state.selection.ranges;
+  const touchesSelection = (from, to) => {
+    for (const r of ranges) {
+      if (r.from <= to && r.to >= from) return true;
+    }
+    return false;
+  };
+  const activePath = getActiveFilePath();
+  const vault = getVaultPath();
+  const activeDir = dirOf(activePath || '');
 
+  // Scan the visible ranges with a regex (cheap; same shape as before via
+  // MatchDecorator). Emit replace decorations for matches that don't overlap
+  // the selection.
+  const decos = [];
+  for (const { from, to } of view.visibleRanges) {
+    const text = state.doc.sliceString(from, to);
+    IMAGE_RE.lastIndex = 0;
+    let m;
+    while ((m = IMAGE_RE.exec(text)) !== null) {
+      const matchFrom = from + m.index;
+      const matchTo = matchFrom + m[0].length;
+      if (touchesSelection(matchFrom, matchTo)) continue;
+      const alt = m[1];
+      const rawUrl = m[2];
+      const src = resolveImageUrl(rawUrl, activeDir, vault);
+      if (!src) continue;
+      const linkUrl = findWrappingLinkUrl(state, matchFrom);
+      decos.push({
+        from: matchFrom,
+        to: matchTo,
+        deco: Decoration.replace({ widget: new ImageWidget(src, alt, linkUrl) }),
+      });
+    }
+  }
+  decos.sort((a, b) => a.from - b.from || a.to - b.to);
+  for (const d of decos) builder.add(d.from, d.to, d.deco);
+  return builder.finish();
+}
+
+export function imageWidgets(getActiveFilePath, getVaultPath) {
   return ViewPlugin.fromClass(
     class {
       constructor(view) {
-        this.decorations = matcher.createDeco(view);
+        this.decorations = buildDecorations(view, getActiveFilePath, getVaultPath);
       }
       update(update) {
-        if (update.docChanged || update.viewportChanged) {
-          this.decorations = matcher.updateDeco(update, this.decorations);
+        if (update.docChanged || update.viewportChanged || update.selectionSet) {
+          this.decorations = buildDecorations(update.view, getActiveFilePath, getVaultPath);
         }
       }
     },

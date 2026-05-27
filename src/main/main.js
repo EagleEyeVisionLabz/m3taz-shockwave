@@ -318,6 +318,25 @@ async function createWindow() {
 
   attachWindowBoundsPersistence(win);
 
+  // Navigation hard-block. The renderer is a single page that should NEVER
+  // navigate away — if it does, the app blanks and the user has no way back.
+  // This kicks in for: a stray <a href="https://…"> click anywhere in the UI
+  // that the renderer didn't intercept (e.g. markdown links in chat that
+  // weren't routed through openExternal), location.href changes, form
+  // submits, etc. http/https URLs are routed to the system browser;
+  // anything else is silently blocked.
+  win.webContents.on('will-navigate', (event, url) => {
+    // Allow the very first load (DEV_URL or file://…) — will-navigate also
+    // fires for the initial loadURL/loadFile on some Electron versions.
+    if (url === win.webContents.getURL()) return;
+    event.preventDefault();
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   if (DEV_URL) {
     win.loadURL(DEV_URL);
     win.webContents.openDevTools({ mode: 'detach' });
@@ -431,9 +450,16 @@ async function hashFileOf(p) {
 }
 
 ipcMain.handle('fs:createFile', async (_evt, { dirPath, name, content = '' }) => {
-  const ext = isMdFile(name) ? '' : '.md';
-  const base = ext ? name : name.slice(0, -3);
-  const target = await uniquePath(dirPath, base, ext || '.md');
+  const base = name.replace(/\.md$/i, '');
+  // Workspace-wide uniqueness: the link index is keyed by basename, so two
+  // .md files sharing a basename in different folders would break it. Match
+  // fs:renameFile / fs:moveItem.
+  const target = await uniqueInWorkspace({
+    workspaceRoot: watcherRootDir,
+    destDir: dirPath,
+    base,
+    ext: '.md',
+  });
   await fs.writeFile(target, content, 'utf8');
   return target;
 });
@@ -507,6 +533,24 @@ ipcMain.handle('fs:trashFile', async (evt, filePath) => {
   return true;
 });
 
+// Bulk trash. The renderer is responsible for confirming with the user before
+// calling this — no per-file system dialog. Returns the paths that were
+// successfully trashed; failures are logged but don't abort the rest so a
+// partial success still cleans up what it can.
+ipcMain.handle('fs:trashFiles', async (_evt, filePaths) => {
+  if (!Array.isArray(filePaths)) return [];
+  const trashed = [];
+  for (const p of filePaths) {
+    try {
+      await shell.trashItem(p);
+      trashed.push(p);
+    } catch (err) {
+      console.warn('[trashFiles] failed:', p, err);
+    }
+  }
+  return trashed;
+});
+
 ipcMain.handle('shell:revealInFolder', async (_evt, filePath) => {
   shell.showItemInFolder(filePath);
 });
@@ -526,19 +570,31 @@ function revealLabel() {
 
 ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
-  const { isMd = true, isBookmarked = false } = opts;
+  const { isMd = true, isBookmarked = false, selectionCount = 1 } = opts;
+  const multi = selectionCount > 1;
   const template = [];
-  if (isMd) template.push({ label: 'Open in new tab', value: FILE_ACTIONS.NEW_TAB });
-  template.push(
-    { label: 'Duplicate', value: FILE_ACTIONS.DUPLICATE },
-    { type: 'separator' },
-    { label: isBookmarked ? 'Remove bookmark' : 'Bookmark', value: FILE_ACTIONS.TOGGLE_BOOKMARK },
-    { type: 'separator' },
-    { label: revealLabel(), value: FILE_ACTIONS.REVEAL },
-    { type: 'separator' },
-    { label: 'Rename', value: FILE_ACTIONS.RENAME },
-    { label: 'Delete', value: FILE_ACTIONS.DELETE },
-  );
+  if (multi) {
+    // Bulk-safe actions only: open all in new tabs (if md), bookmark toggle, delete.
+    // Rename/Duplicate/Reveal don't make sense across a selection.
+    if (isMd) template.push({ label: `Open ${selectionCount} files in new tabs`, value: FILE_ACTIONS.NEW_TAB });
+    template.push(
+      { label: isBookmarked ? `Remove ${selectionCount} bookmarks` : `Bookmark ${selectionCount} files`, value: FILE_ACTIONS.TOGGLE_BOOKMARK },
+      { type: 'separator' },
+      { label: `Delete ${selectionCount} files`, value: FILE_ACTIONS.DELETE },
+    );
+  } else {
+    if (isMd) template.push({ label: 'Open in new tab', value: FILE_ACTIONS.NEW_TAB });
+    template.push(
+      { label: 'Duplicate', value: FILE_ACTIONS.DUPLICATE },
+      { type: 'separator' },
+      { label: isBookmarked ? 'Remove bookmark' : 'Bookmark', value: FILE_ACTIONS.TOGGLE_BOOKMARK },
+      { type: 'separator' },
+      { label: revealLabel(), value: FILE_ACTIONS.REVEAL },
+      { type: 'separator' },
+      { label: 'Rename', value: FILE_ACTIONS.RENAME },
+      { label: 'Delete', value: FILE_ACTIONS.DELETE },
+    );
+  }
   return popupContextMenu(win, template);
 });
 

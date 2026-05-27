@@ -1,5 +1,5 @@
 import React from 'react';
-import { PencilIcon, CodeIcon, CheckCircleIcon, DotCircleIcon } from './Icons.jsx';
+import { PencilIcon, CodeIcon, CheckCircleIcon, DotCircleIcon, RotateCcwIcon, RotateCwIcon } from './Icons.jsx';
 import { VIEW_MODES, SAVE_STATES } from './constants.js';
 
 function formatNum(n) {
@@ -16,6 +16,7 @@ function formatNum(n) {
  *   viewMode        'live' | 'raw'
  *   onToggleViewMode()
  *   saveState       'saved' | 'unsaved'
+ *   canUndo / canRedo / onUndo / onRedo  — edit-history controls
  */
 export default function EditorStatusBar({
   backlinkCount,
@@ -24,6 +25,10 @@ export default function EditorStatusBar({
   viewMode,
   onToggleViewMode,
   saveState,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
 }) {
   const isLive = viewMode === VIEW_MODES.LIVE;
   const isSaved = saveState === SAVE_STATES.SAVED;
@@ -33,9 +38,26 @@ export default function EditorStatusBar({
 
   return (
     <div className="editor-status-bar" role="status" aria-live="polite">
-      <span className="status-item status-backlinks">
-        {formatNum(backlinkCount)} {backlinkCount === 1 ? 'backlink' : 'backlinks'}
-      </span>
+      <button
+        type="button"
+        className="status-toggle"
+        onClick={onUndo}
+        disabled={!canUndo}
+        title="Undo"
+        aria-label="Undo"
+      >
+        <RotateCcwIcon size={12} />
+      </button>
+      <button
+        type="button"
+        className="status-toggle"
+        onClick={onRedo}
+        disabled={!canRedo}
+        title="Redo"
+        aria-label="Redo"
+      >
+        <RotateCwIcon size={12} />
+      </button>
 
       <button
         type="button"
@@ -47,6 +69,10 @@ export default function EditorStatusBar({
       >
         {isLive ? <PencilIcon size={12} /> : <CodeIcon size={12} />}
       </button>
+
+      <span className="status-item status-backlinks">
+        {formatNum(backlinkCount)} {backlinkCount === 1 ? 'backlink' : 'backlinks'}
+      </span>
 
       <span className="status-item">{formatNum(words)} words</span>
       <span className="status-item">{formatNum(chars)} characters</span>

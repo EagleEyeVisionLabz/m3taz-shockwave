@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Compartment, EditorState } from '@codemirror/state';
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, indentWithTab, undo, redo, undoDepth, redoDepth } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { syntaxHighlighting, defaultHighlightStyle, indentOnInput } from '@codemirror/language';
 import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
@@ -46,7 +46,7 @@ function computeStats(state) {
  *   clear()                        — empties the doc, resets cursor
  */
 const Editor = forwardRef(function Editor(
-  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, getActiveFilePathRef, ensureActiveFilePathRef, onImageError, onRequestUrl, onSendToAgent, onStats, dark, viewMode, hideLineNumbers },
+  { onLinkClick, onChange, getPageIndexRef, getVaultPathRef, getActiveFilePathRef, flushDraftToDiskRef, onImageError, onRequestUrl, onSendToAgent, onStats, onHistory, dark, viewMode, hideLineNumbers },
   ref,
 ) {
   const hostRef = useRef(null);
@@ -60,6 +60,7 @@ const Editor = forwardRef(function Editor(
   const sendToAgentRef = useRef(onSendToAgent);
   const imageErrorRef = useRef(onImageError);
   const statsRef = useRef(onStats);
+  const historyRef = useRef(onHistory);
   const statsRafRef = useRef(0);
   const isProgrammaticRef = useRef(false);
 
@@ -69,6 +70,7 @@ const Editor = forwardRef(function Editor(
   useEffect(() => { sendToAgentRef.current = onSendToAgent; }, [onSendToAgent]);
   useEffect(() => { imageErrorRef.current = onImageError; }, [onImageError]);
   useEffect(() => { statsRef.current = onStats; }, [onStats]);
+  useEffect(() => { historyRef.current = onHistory; }, [onHistory]);
 
   // Toggle the live-preview decoration bundle without rebuilding the editor.
   // Cursor, history, scroll all survive a reconfigure.
@@ -229,6 +231,10 @@ const Editor = forwardRef(function Editor(
         requestAnimationFrame(() => { view.scrollDOM.scrollTop = 0; });
       }
       statsRef.current?.(computeStats(view.state));
+      historyRef.current?.({
+        canUndo: undoDepth(view.state) > 0,
+        canRedo: redoDepth(view.state) > 0,
+      });
     },
     clear: () => {
       const view = viewRef.current;
@@ -239,6 +245,24 @@ const Editor = forwardRef(function Editor(
       isProgrammaticRef.current = false;
       view.dispatch({ selection: { anchor: 0 } });
       statsRef.current?.({ words: 0, chars: 0 });
+      historyRef.current?.({
+        canUndo: undoDepth(view.state) > 0,
+        canRedo: redoDepth(view.state) > 0,
+      });
+    },
+    undo: () => {
+      const view = viewRef.current;
+      if (!view) return false;
+      const result = undo(view);
+      view.focus();
+      return result;
+    },
+    redo: () => {
+      const view = viewRef.current;
+      if (!view) return false;
+      const result = redo(view);
+      view.focus();
+      return result;
     },
     flashRanges: (ranges) => {
       const view = viewRef.current;
@@ -311,7 +335,7 @@ const Editor = forwardRef(function Editor(
       livePreviewCompartment.of(initialLive),
       imagePaste({
         getActiveFilePath: () => getActiveFilePathRef?.current ?? null,
-        ensureActiveFilePath: () => ensureActiveFilePathRef?.current?.() ?? null,
+        flushDraftToDisk: () => flushDraftToDiskRef?.current?.() ?? null,
         onError: (msg) => imageErrorRef.current?.(msg),
       }),
       autocompletion({
@@ -331,13 +355,19 @@ const Editor = forwardRef(function Editor(
           changeRef.current?.();
         }
         if (update.docChanged) {
-          // Coalesce stats across rapid keystrokes — at most one compute per frame.
+          // Coalesce stats + history-depth across rapid keystrokes — at most
+          // one compute per frame. undoDepth/redoDepth are O(1) array-length
+          // reads, so piggybacking is free.
           if (statsRafRef.current) cancelAnimationFrame(statsRafRef.current);
           statsRafRef.current = requestAnimationFrame(() => {
             statsRafRef.current = 0;
             const v = viewRef.current;
             if (!v) return;
             statsRef.current?.(computeStats(v.state));
+            historyRef.current?.({
+              canUndo: undoDepth(v.state) > 0,
+              canRedo: redoDepth(v.state) > 0,
+            });
           });
         }
       }),
@@ -371,6 +401,7 @@ const Editor = forwardRef(function Editor(
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
     statsRef.current?.({ words: 0, chars: 0 });
+    historyRef.current?.({ canUndo: false, canRedo: false });
     return () => {
       if (statsRafRef.current) {
         cancelAnimationFrame(statsRafRef.current);

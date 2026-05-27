@@ -230,31 +230,13 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     onAfterSwitch?.();
   }, [writeNow, captureCurrentViewState, onAfterSwitch]);
 
-  /**
-   * Promote a draft tab to a real file on disk. Returns the new path.
-   * Concurrency-guarded so two rapid edits don't race to create two files.
-   */
-  const promotionInFlight = useRef(new Map());
-  const promoteDraft = useCallback(async (tabId, vaultPath, { name, initialContent = '' }) => {
-    if (!vaultPath) throw new Error('No active workspace');
-    const existing = promotionInFlight.current.get(tabId);
-    if (existing) return existing;
-    const work = (async () => {
-      const cleanName = (name || 'Untitled').replace(/\.md$/i, '').trim() || 'Untitled';
-      const newPath = await window.api.createFile(vaultPath, `${cleanName}.md`, initialContent);
-      setTabs((prev) => prev.map((t) => (
-        t.id === tabId
-          ? { ...t, path: newPath, isDraft: false, history: [newPath], historyIndex: 0 }
-          : t
-      )));
-      return newPath;
-    })();
-    promotionInFlight.current.set(tabId, work);
-    try {
-      return await work;
-    } finally {
-      promotionInFlight.current.delete(tabId);
-    }
+  // Flip a draft tab to a real file. Caller has already created the file on disk.
+  const promoteTabPath = useCallback((tabId, newPath) => {
+    setTabs((prev) => prev.map((t) => (
+      t.id === tabId
+        ? { ...t, path: newPath, isDraft: false, history: [newPath], historyIndex: 0 }
+        : t
+    )));
   }, []);
 
   return {
@@ -277,7 +259,7 @@ export function useTabs({ editorRef, writeNow, onAfterSwitch }) {
     renameTabsPath,
     captureCurrentViewState,
     resetTabs,
-    promoteDraft,
+    promoteTabPath,
     goBack,
     goForward,
     viewStateByPath,

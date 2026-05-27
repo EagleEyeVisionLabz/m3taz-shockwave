@@ -165,7 +165,7 @@ html, body, #root {
    from the sidebar's left edge; the toolbar icons match. */
 .sort-bar {
   position: relative;
-  padding: 24px 8px 18px 28px;
+  padding: 24px 8px 18px 36px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1973,9 +1973,14 @@ html, body, #root {
   line-height: 0;
 }
 
-.editor-status-bar .status-toggle:hover {
+.editor-status-bar .status-toggle:not(:disabled):hover {
   background: var(--bg-hover);
   color: var(--fg-primary);
+}
+
+.editor-status-bar .status-toggle:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .editor-status-bar .status-icon {

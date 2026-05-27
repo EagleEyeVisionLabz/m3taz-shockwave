@@ -78,7 +78,7 @@ export default FileTree;
 
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
 
-function Node({ node, style, dragHandle, onFileAction, onFolderAction, getIsBookmarked, isBookmarked }) {
+function Node({ node, tree, style, dragHandle, onFileAction, onFolderAction, getIsBookmarked, isBookmarked }) {
   const isFolder = node.isInternal;
   const isMd = !isFolder && node.data.name.toLowerCase().endsWith('.md');
   const isImage = !isFolder && IMAGE_EXT_RE.test(node.data.name);
@@ -114,19 +114,47 @@ function Node({ node, style, dragHandle, onFileAction, onFolderAction, getIsBook
     e.stopPropagation();
 
     if (isFolder) {
+      // Folder context menus stay single-selection — mixed folder/file
+      // multi-select adds more UX confusion than it's worth here.
       const action = await window.api.showFolderContextMenu();
       if (!action) return;
       if (onFolderAction) onFolderAction(action, node.id);
       return;
     }
 
-    const bookmarked = getIsBookmarked ? getIsBookmarked(node.id) : !!isBookmarked;
-    const action = await window.api.showFileContextMenu({ isMd, isBookmarked: bookmarked });
+    // File context. Finder semantics: if the right-clicked row is part of an
+    // existing multi-selection, the action operates on the whole selection.
+    // Otherwise the selection collapses to just this row.
+    const selectedIds = tree?.selectedIds ?? new Set();
+    let targetPaths;
+    if (selectedIds.has(node.id) && selectedIds.size > 1) {
+      // Drop folders from the multi-selection — bulk file ops only act on files.
+      targetPaths = [];
+      for (const id of selectedIds) {
+        const n = tree.get(id);
+        if (n && !n.isInternal) targetPaths.push(id);
+      }
+      if (targetPaths.length === 0) targetPaths = [node.id];
+    } else {
+      tree.select(node.id);
+      targetPaths = [node.id];
+    }
+
+    const allMd = targetPaths.every((p) => p.toLowerCase().endsWith('.md'));
+    const allBookmarked = getIsBookmarked
+      ? targetPaths.every((p) => getIsBookmarked(p))
+      : !!isBookmarked;
+    const action = await window.api.showFileContextMenu({
+      isMd: allMd,
+      isBookmarked: allBookmarked,
+      selectionCount: targetPaths.length,
+    });
     if (!action) return;
     if (action === FILE_ACTIONS.RENAME) {
+      // Rename is single-only (the menu template hides it when multi).
       node.edit();
     } else if (onFileAction) {
-      onFileAction(action, node.id);
+      onFileAction(action, targetPaths);
     }
   };
 
@@ -135,9 +163,22 @@ function Node({ node, style, dragHandle, onFileAction, onFolderAction, getIsBook
       ref={dragHandle}
       style={style}
       className={`tree-row ${node.isSelected ? 'selected' : ''} ${willReceiveDrop ? 'drop-target' : ''}`}
-      onClick={() => {
-        node.select();
-        if (isFolder) node.toggle();
+      onClick={(e) => {
+        // react-arborist's default Row wrapper around this Node also binds
+        // onClick={node.handleClick}. If we don't stop propagation, the click
+        // bubbles up and handleClick runs TWICE — for a Cmd+click that means
+        // the second call sees isSelected=true (we just added it) and
+        // immediately deselects, undoing the multi-select. So we stop the
+        // event here and own the click logic ourselves.
+        e.stopPropagation();
+        // Delegate to react-arborist's modifier-aware handler so Cmd+click
+        // toggles a multi-selection and Shift+click extends a range.
+        node.handleClick(e);
+        // Folder expand-collapse only on a plain click — if the user is
+        // Cmd/Shift-clicking to build a selection, leave folder state alone.
+        if (isFolder && !e.metaKey && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+          node.toggle();
+        }
       }}
       onDoubleClick={() => !isFolder && node.edit()}
       onContextMenu={handleContextMenu}

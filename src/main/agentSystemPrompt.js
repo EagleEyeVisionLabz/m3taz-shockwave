@@ -119,4 +119,4 @@ A skill is a folder with a \`SKILL.md\` file — YAML frontmatter on top, markdo
 
 ## After you create one
 
-Skills are scanned at session boot. After writing the files, tell the user to hit **Clear** in the chat so the new skill loads on the next message.`;
+Skills are scanned at session boot. After writing the files, tell the user to click the circular-arrow (counter-clockwise) icon in the **upper-left of the chat window** to start a new session — that's what clears the chat and loads the new skill on the next message.`;

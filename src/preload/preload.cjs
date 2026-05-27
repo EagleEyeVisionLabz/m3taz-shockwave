@@ -129,6 +129,9 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('fs:writeImage', { dirPath, bytes, ext, baseName }),
   /** Move file to OS trash. @param {string} filePath @returns {Promise<boolean>} True if removed. */
   trashFile: (filePath) => ipcRenderer.invoke('fs:trashFile', filePath),
+  /** Move multiple files to OS trash with no per-file confirm (renderer-side
+   *  confirm is the caller's job). @param {string[]} filePaths @returns {Promise<string[]>} Paths that were trashed. */
+  trashFiles: (filePaths) => ipcRenderer.invoke('fs:trashFiles', filePaths),
   /** Move folder to OS trash (requires user confirmation in main). @param {string} folderPath @returns {Promise<boolean>} */
   trashFolder: (folderPath) => ipcRenderer.invoke('fs:trashFolder', folderPath),
 
@@ -154,7 +157,11 @@ contextBridge.exposeInMainWorld('api', {
 
   /**
    * Pop up the right-click menu for a file row in the sidebar.
-   * @param {{ isMd?: boolean, isBookmarked?: boolean }} opts
+   * `selectionCount` > 1 swaps the menu to bulk-safe actions only
+   * (no Rename/Duplicate/Reveal). When `selectionCount` > 1, `isBookmarked`
+   * describes whether ALL selected files are currently bookmarked (drives
+   * the Bookmark/Remove bookmark label).
+   * @param {{ isMd?: boolean, isBookmarked?: boolean, selectionCount?: number }} opts
    * @returns {Promise<string|null>} The chosen FILE_ACTIONS value, or null if dismissed.
    */
   showFileContextMenu: (opts) => ipcRenderer.invoke('context:fileMenu', opts),
