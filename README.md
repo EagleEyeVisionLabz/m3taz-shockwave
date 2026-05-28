@@ -10,6 +10,12 @@ your own GitHub repo for free.
 
 [**Download ↓**](#install) · macOS · Windows · Linux
 
+<br>
+
+<h3><img src="docs/ai-architects.png" width="28" align="top" alt="" />&nbsp;<a href="https://skool.com/ai-architects">AI Architects</a></h3>
+
+Want to learn to build apps like this? Join the <a href="https://skool.com/ai-architects">AI Architects</a>.
+
 </div>
 
 ---
