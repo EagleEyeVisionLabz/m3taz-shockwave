@@ -283,6 +283,7 @@ export default function App() {
       const text = editor.getText();
       try {
         let path;
+        let mtime;
         if (tab.isDraft) {
           // Only trust titleDraft when the dirty tab is also the active tab;
           // for any other tab (background flush during switch) fall back.
@@ -290,13 +291,18 @@ export default function App() {
           const name = (candidate || 'Untitled').replace(/\.md$/i, '').trim() || 'Untitled';
           const targetDir = newFileDirRef.current();
           if (!targetDir) throw new Error('No active workspace');
-          path = await window.api.createFile(targetDir, `${name}.md`, text);
+          const res = await window.api.createFile(targetDir, `${name}.md`, text);
+          path = res.path;
+          mtime = res.mtime;
           promoteTabPathRef.current(tabId, path);
         } else {
           path = tab.path;
-          await window.api.writeFile(path, text);
+          mtime = await window.api.writeFile(path, text);
         }
-        linkIndex.updateFile(path, text);
+        // Pass the file's real mtime (returned by main) so the self-echo guard
+        // can compare against the watcher's stat.mtimeMs without losing the
+        // fractional ms that Date.now() would drop.
+        linkIndex.updateFile(path, text, mtime);
         if (dirtyTabIdRef.current === null) setSaveState(SAVE_STATES.SAVED);
         return path;
       } catch (err) {
@@ -887,8 +893,8 @@ export default function App() {
         return;
       }
       await window.api.ensureDir(dir);
-      const newPath = await window.api.createFile(dir, `${name}.md`, '');
-      linkIndex.updateFile(newPath, '');
+      const { path: newPath, mtime } = await window.api.createFile(dir, `${name}.md`, '');
+      linkIndex.updateFile(newPath, '', mtime);
       await fileOps.treeAndIndexChanged();
       await openInActiveTab(newPath);
     } catch (err) {
@@ -1079,6 +1085,15 @@ export default function App() {
     };
     const unsub = window.api.onFsChanged((evt) => {
       const li = linkIndexRefForWatcher.current;
+      // TEMP diagnostic — log every event that touches the active tab.
+      const af = activeFileRef.current;
+      const touchesActive =
+        (evt.type === 'rename' && (evt.oldPath === af || evt.newPath === af)) ||
+        (evt.type !== 'rename' && evt.path === af);
+      if (touchesActive) {
+        // eslint-disable-next-line no-console
+        console.log('[sync-rename renderer] fs:changed touches active tab', { activeFile: af, evt });
+      }
       if (evt.type === 'tree') {
         scheduleRefresh();
         return;

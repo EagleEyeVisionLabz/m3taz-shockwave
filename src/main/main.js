@@ -228,6 +228,12 @@ async function doWriteSettings(patch) {
     // No file yet — first write creates it.
   }
   const out = { ...existing, ...patch };
+  // Defensive deep-merge for codingAgent: a renderer caller that builds a
+  // partial sub-object (e.g. forgetting systemPrompt) would otherwise wipe
+  // sibling fields on disk via the shallow spread above.
+  if (patch.codingAgent && existing.codingAgent) {
+    out.codingAgent = { ...existing.codingAgent, ...patch.codingAgent };
+  }
   // Encrypt secret-bearing fields. encryptSecret is idempotent so values that
   // came from the on-disk file (already encrypted) pass through unchanged.
   if (out.codingAgent) out.codingAgent.apiKey = encryptSecret(out.codingAgent.apiKey ?? '');
@@ -453,6 +459,12 @@ ipcMain.handle('fs:readFile', async (_evt, filePath) => {
 
 ipcMain.handle('fs:writeFile', async (_evt, { filePath, content }) => {
   await fs.writeFile(filePath, content, 'utf8');
+  // Return the file's real mtime so the renderer's self-echo guard can compare
+  // apples-to-apples against the watcher event's stat.mtimeMs. Using Date.now()
+  // in the renderer drops fractional ms, which can cause a same-ms write to
+  // look "fresh" to the guard.
+  const st = await fs.stat(filePath);
+  return st.mtimeMs;
 });
 
 // File identity helpers used by the rename correlator. Hash is computed
@@ -488,7 +500,8 @@ ipcMain.handle('fs:createFile', async (_evt, { dirPath, name, content = '' }) =>
     ext: '.md',
   });
   await fs.writeFile(target, content, 'utf8');
-  return target;
+  const st = await fs.stat(target);
+  return { path: target, mtime: st.mtimeMs };
 });
 
 ipcMain.handle('fs:renameFile', async (_evt, { fromPath, toName }) => {
@@ -1179,6 +1192,12 @@ async function flushWatcher() {
   }
 }
 
+// TEMP diagnostic log — remove after the GitHub-side rename bug is pinned down.
+function dlog(label, obj) {
+  const t = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
+  console.log(`[sync-rename ${t}] ${label}`, obj);
+}
+
 // Wire chokidar -> correlator -> pendingByPath. The correlator emits one of
 // 'add' | 'unlink' | 'rename'. The first two go through pendingByPath so they
 // pick up the per-path coalescing behavior; 'rename' goes through renameQueue
@@ -1186,6 +1205,7 @@ async function flushWatcher() {
 function setupCorrelator() {
   correlator = createRenameCorrelator({
     emit: (e) => {
+      dlog('correlator emit', e);
       if (e.type === 'rename') {
         renameQueue.push(e);
         scheduleFlush();
@@ -1211,6 +1231,7 @@ async function onChokidarAdd(p) {
     return;
   }
   const [ino, hash] = await Promise.all([statInoOf(p), hashFileOf(p)]);
+  dlog('chokidar add', { p, ino, hash: hash?.slice(0, 8) });
   correlator.onPathAppeared(p, ino, hash);
 }
 
@@ -1223,6 +1244,7 @@ async function onChokidarChange(p) {
   // Atomic saves (vim/VS Code) arrive here, with a new inode. Update identity
   // so a future unlink for this path has the latest ino+hash to correlate with.
   const [ino, hash] = await Promise.all([statInoOf(p), hashFileOf(p)]);
+  dlog('chokidar change', { p, ino, hash: hash?.slice(0, 8) });
   correlator.onPathSeen(p, ino, hash);
   pendingByPath.set(p, pendingByPath.get(p) === 'add' ? 'add' : 'change');
   scheduleFlush();
@@ -1234,6 +1256,7 @@ function onChokidarUnlink(p) {
     scheduleFlush();
     return;
   }
+  dlog('chokidar unlink', { p });
   correlator.onPathGone(p);
 }
 

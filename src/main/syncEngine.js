@@ -21,7 +21,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { BrowserWindow } from 'electron';
-import { gitSpawn, workspaceStatus } from './sync.js';
+import { gitSpawn, workspaceStatus, parseGithubUrl } from './sync.js';
 
 // ─── Engine state ──────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ const STATUS = Object.freeze({
   ERROR: 'error',           // last tick failed (auth/network/etc.)
 });
 
-let currentStatus = { status: STATUS.DISABLED, detail: '', lastSyncAt: null };
+let currentStatus = { status: STATUS.DISABLED, detail: '', lastSyncAt: null, repoUrl: null };
 
 function emitStatus(patch) {
   currentStatus = { ...currentStatus, ...patch };
@@ -106,6 +106,34 @@ async function isRebasePaused(workspacePath) {
   return false;
 }
 
+// Treat a stderr blob as an auth failure. Same heuristic used in several places.
+function isAuthError(stderr) {
+  const s = stderr.toLowerCase();
+  return s.includes('authentication') || s.includes('401') || s.includes('could not read username');
+}
+
+// Commit any dirty changes in the working tree. Returns true if everything is
+// clean by the end, false on a git error (status emitted by caller).
+async function commitDirty(workspacePath) {
+  const status = await gitSpawn(workspacePath, ['status', '--porcelain'], { timeoutMs: 10_000 });
+  if (!status.ok) {
+    emitStatus({ status: STATUS.ERROR, detail: `git status failed: ${status.stderr.trim()}` });
+    return false;
+  }
+  if (status.stdout.trim().length === 0) return true;
+  const add = await gitSpawn(workspacePath, ['add', '-A'], { timeoutMs: 30_000 });
+  if (!add.ok) {
+    emitStatus({ status: STATUS.ERROR, detail: `git add failed: ${add.stderr.trim()}` });
+    return false;
+  }
+  const commit = await gitSpawn(workspacePath, ['commit', '-m', `Shockwave sync: ${new Date().toISOString()}`], { timeoutMs: 30_000 });
+  if (!commit.ok) {
+    emitStatus({ status: STATUS.ERROR, detail: `git commit failed: ${commit.stderr.trim()}` });
+    return false;
+  }
+  return true;
+}
+
 async function runTick() {
   if (!state.running) return;
   if (state.ticking) return; // serial: never overlap a tick with itself
@@ -121,99 +149,91 @@ async function runTick() {
       return;
     }
 
-    emitStatus({ status: STATUS.SYNCING, detail: 'Checking for local changes' });
-
-    // 1. Flush dirty editor buffers to disk so step 2 sees them.
+    // 1. Flush dirty editor buffers to disk. Silent — no status emit. The
+    // status icon should only light up for actual upload/download work, not
+    // for the routine checks we run every tick.
     await requestFlush();
 
-    // Resolve the current branch once. We pass it explicitly to pull and push
-    // so we don't depend on an upstream being configured (the first tick on
-    // a freshly-init'd repo has no upstream yet).
+    // Resolve the current branch once. We pass it explicitly to fetch / rebase
+    // / push so we don't depend on an upstream being configured (the first
+    // tick on a freshly-init'd repo has no upstream yet).
     const branchRes = await gitSpawn(state.workspacePath, ['rev-parse', '--abbrev-ref', 'HEAD'], { timeoutMs: 5_000 });
     const branchName = branchRes.ok ? branchRes.stdout.trim() : 'main';
 
-    // 2. Commit if local has changes.
-    const status = await gitSpawn(state.workspacePath, ['status', '--porcelain'], { timeoutMs: 10_000 });
-    if (!status.ok) {
-      emitStatus({ status: STATUS.ERROR, detail: `git status failed: ${status.stderr.trim()}` });
-      return;
-    }
-    const dirty = status.stdout.trim().length > 0;
-    if (dirty) {
-      emitStatus({ status: STATUS.SYNCING, detail: 'Committing local changes' });
-      const add = await gitSpawn(state.workspacePath, ['add', '-A'], { timeoutMs: 30_000 });
-      if (!add.ok) {
-        emitStatus({ status: STATUS.ERROR, detail: `git add failed: ${add.stderr.trim()}` });
-        return;
-      }
-      const msg = `Shockwave sync: ${new Date().toISOString()}`;
-      const commit = await gitSpawn(state.workspacePath, ['commit', '-m', msg], { timeoutMs: 30_000 });
-      if (!commit.ok) {
-        emitStatus({ status: STATUS.ERROR, detail: `git commit failed: ${commit.stderr.trim()}` });
-        return;
-      }
-    }
+    // 2. Commit local changes if dirty. Silent.
+    if (!(await commitDirty(state.workspacePath))) return;
 
-    // 3. Pull (rebase). Check first whether the remote branch actually exists
-    // — on a freshly-created repo with no commits pushed yet, ls-remote shows
-    // no heads, so pull would fail with "couldn't find remote ref". Skip the
-    // pull in that case; the push step below will create the branch.
-    emitStatus({ status: STATUS.SYNCING, detail: 'Fetching from origin' });
-    const lsRemote = await gitSpawn(state.workspacePath, ['ls-remote', '--heads', 'origin', branchName], {
-      pat: state.pat,
-      timeoutMs: 30_000,
-    });
-    if (!lsRemote.ok) {
-      const stderr = lsRemote.stderr.toLowerCase();
-      if (stderr.includes('authentication') || stderr.includes('401') || stderr.includes('could not read username')) {
-        emitStatus({ status: STATUS.PAUSED, detail: 'Authentication failed — check your PAT' });
-        return;
-      }
-      emitStatus({ status: STATUS.ERROR, detail: `git ls-remote failed: ${lsRemote.stderr.trim()}` });
-      return;
-    }
-    const remoteHasBranch = lsRemote.stdout.trim().length > 0;
-    if (remoteHasBranch) {
-      emitStatus({ status: STATUS.SYNCING, detail: 'Pulling from origin' });
-      const pull = await gitSpawn(state.workspacePath, ['pull', '--rebase', '--autostash', 'origin', branchName], {
-        pat: state.pat,
-        timeoutMs: 60_000,
-      });
-      if (!pull.ok) {
-        // Common causes: auth (401), network, or rebase conflict. Distinguish
-        // by checking for paused rebase state and by string-matching stderr
-        // for auth errors. Anything else → generic error (will retry next tick).
-        if (await isRebasePaused(state.workspacePath)) {
-          emitStatus({ status: STATUS.PAUSED, detail: 'Rebase paused — resolve conflicts in editor' });
-          return;
-        }
-        const stderr = pull.stderr.toLowerCase();
-        if (stderr.includes('authentication') || stderr.includes('401') || stderr.includes('could not read username')) {
-          emitStatus({ status: STATUS.PAUSED, detail: 'Authentication failed — check your PAT' });
-          return;
-        }
-        emitStatus({ status: STATUS.ERROR, detail: `git pull failed: ${pull.stderr.trim()}` });
-        return;
-      }
-    }
-
-    // 4. Push if ahead. Use --set-upstream the first time so subsequent
-    // pulls/pushes can use the tracking branch.
-    emitStatus({ status: STATUS.SYNCING, detail: 'Pushing to origin' });
-    const push = await gitSpawn(state.workspacePath, ['push', '--set-upstream', 'origin', branchName], {
+    // 3. Fetch from origin so we can compare HEAD to origin/<branch>. Silent.
+    // On a freshly-init'd repo with no remote branch yet, fetch fails with
+    // "couldn't find remote ref"; we treat that as "no remote branch, skip
+    // pull, fall through to push".
+    let remoteBranchExists = true;
+    const fetch = await gitSpawn(state.workspacePath, ['fetch', 'origin', branchName], {
       pat: state.pat,
       timeoutMs: 60_000,
     });
-    if (!push.ok) {
-      const stderr = push.stderr.toLowerCase();
-      if (stderr.includes('authentication') || stderr.includes('401') || stderr.includes('could not read username')) {
+    if (!fetch.ok) {
+      const stderr = fetch.stderr.toLowerCase();
+      if (isAuthError(stderr)) {
         emitStatus({ status: STATUS.PAUSED, detail: 'Authentication failed — check your PAT' });
         return;
       }
-      // "Everything up-to-date" or "nothing to push" → not really an error.
-      if (push.code !== 0 && !stderr.includes('up-to-date') && !stderr.includes('nothing to')) {
-        emitStatus({ status: STATUS.ERROR, detail: `git push failed: ${push.stderr.trim()}` });
+      if (stderr.includes("couldn't find remote ref")) {
+        remoteBranchExists = false;
+      } else {
+        emitStatus({ status: STATUS.ERROR, detail: `git fetch failed: ${fetch.stderr.trim()}` });
         return;
+      }
+    }
+
+    // 4. If remote has new commits we don't have, rebase. Visible — this is
+    // the "downloading from git" case the user actually wants to see.
+    // Without --autostash, the working tree must be clean before rebase; the
+    // user may have typed during the fetch network call, so re-flush + commit.
+    if (remoteBranchExists) {
+      const aheadRes = await gitSpawn(state.workspacePath, ['rev-list', '--count', `HEAD..origin/${branchName}`], { timeoutMs: 5_000 });
+      const remoteAhead = aheadRes.ok && parseInt(aheadRes.stdout.trim(), 10) > 0;
+      if (remoteAhead) {
+        await requestFlush();
+        if (!(await commitDirty(state.workspacePath))) return;
+        emitStatus({ status: STATUS.SYNCING, detail: 'Pulling from origin' });
+        const rebase = await gitSpawn(state.workspacePath, ['rebase', `origin/${branchName}`], { timeoutMs: 60_000 });
+        if (!rebase.ok) {
+          if (await isRebasePaused(state.workspacePath)) {
+            emitStatus({ status: STATUS.PAUSED, detail: 'Rebase paused — resolve conflicts in editor' });
+            return;
+          }
+          emitStatus({ status: STATUS.ERROR, detail: `git rebase failed: ${rebase.stderr.trim()}` });
+          return;
+        }
+      }
+    }
+
+    // 5. Push if local is ahead of origin (or remote branch doesn't exist
+    // yet — first push). Visible — "uploading to git".
+    let needPush;
+    if (!remoteBranchExists) {
+      needPush = true;
+    } else {
+      const localAheadRes = await gitSpawn(state.workspacePath, ['rev-list', '--count', `origin/${branchName}..HEAD`], { timeoutMs: 5_000 });
+      needPush = localAheadRes.ok && parseInt(localAheadRes.stdout.trim(), 10) > 0;
+    }
+    if (needPush) {
+      emitStatus({ status: STATUS.SYNCING, detail: 'Pushing to origin' });
+      const push = await gitSpawn(state.workspacePath, ['push', '--set-upstream', 'origin', branchName], {
+        pat: state.pat,
+        timeoutMs: 60_000,
+      });
+      if (!push.ok) {
+        if (isAuthError(push.stderr)) {
+          emitStatus({ status: STATUS.PAUSED, detail: 'Authentication failed — check your PAT' });
+          return;
+        }
+        const stderr = push.stderr.toLowerCase();
+        if (push.code !== 0 && !stderr.includes('up-to-date') && !stderr.includes('nothing to')) {
+          emitStatus({ status: STATUS.ERROR, detail: `git push failed: ${push.stderr.trim()}` });
+          return;
+        }
       }
     }
 
@@ -232,7 +252,7 @@ export async function start({ workspacePath, pat, intervalSeconds, windowId }) {
   await stop();
   if (!workspacePath || !pat) {
     state.windowId = windowId ?? state.windowId;
-    emitStatus({ status: STATUS.DISABLED, detail: pat ? 'No workspace' : 'No PAT set', lastSyncAt: null });
+    emitStatus({ status: STATUS.DISABLED, detail: pat ? 'No workspace' : 'No PAT set', lastSyncAt: null, repoUrl: null });
     return;
   }
   // Verify the workspace actually has an origin — without one, sync is a
@@ -240,7 +260,7 @@ export async function start({ workspacePath, pat, intervalSeconds, windowId }) {
   const ws = await workspaceStatus(workspacePath);
   if (!ws.hasOrigin) {
     state.windowId = windowId ?? state.windowId;
-    emitStatus({ status: STATUS.DISABLED, detail: 'Workspace has no remote', lastSyncAt: null });
+    emitStatus({ status: STATUS.DISABLED, detail: 'Workspace has no remote', lastSyncAt: null, repoUrl: null });
     return;
   }
   state.running = true;
@@ -248,7 +268,12 @@ export async function start({ workspacePath, pat, intervalSeconds, windowId }) {
   state.pat = pat;
   state.intervalMs = Math.max(5_000, Math.min(600_000, (intervalSeconds ?? 10) * 1000));
   state.windowId = windowId ?? state.windowId;
-  emitStatus({ status: STATUS.IDLE, detail: '', lastSyncAt: null });
+  // Derive the GitHub web URL from the origin so the status-bar icon can
+  // open the repo in a browser. Non-GitHub remotes parse to null and the
+  // status payload carries null (renderer just renders the icon static).
+  const parsed = parseGithubUrl(ws.originUrl);
+  const repoUrl = parsed ? `https://github.com/${parsed.owner}/${parsed.repo}` : null;
+  emitStatus({ status: STATUS.IDLE, detail: '', lastSyncAt: null, repoUrl });
   // First tick fires immediately (so workspace switch picks up remote
   // changes without waiting up to 10s), then on the interval.
   state.intervalHandle = setInterval(runTick, state.intervalMs);
@@ -270,7 +295,7 @@ export async function stop() {
   }
   state.workspacePath = null;
   state.pat = null;
-  emitStatus({ status: STATUS.DISABLED, detail: '', lastSyncAt: currentStatus.lastSyncAt });
+  emitStatus({ status: STATUS.DISABLED, detail: '', lastSyncAt: currentStatus.lastSyncAt, repoUrl: null });
 }
 
 /** Called from `before-quit` to drain any in-flight tick before app exits. */

@@ -8,26 +8,41 @@ function formatNum(n) {
 
 // Map sync engine status → icon + color + animation + tooltip.
 // 'disabled' returns null so the icon vanishes when the active workspace
-// isn't sync-configured.
+// isn't sync-configured. When the engine knows the GitHub web URL we
+// render the icon as a button that opens the repo via shell.openExternal.
 function renderSyncIcon(syncStatus) {
   if (!syncStatus || syncStatus.status === 'disabled') return null;
-  const { status, detail, lastSyncAt } = syncStatus;
+  const { status, detail, lastSyncAt, repoUrl } = syncStatus;
   let icon = <CloudCheckIcon size={12} />;
   let cls = 'status-cloud-idle';
-  let title = lastSyncAt
+  let baseTitle = lastSyncAt
     ? `Synced ${Math.max(1, Math.round((Date.now() - lastSyncAt) / 1000))}s ago`
     : 'Synced';
   if (status === 'syncing') {
     icon = <RefreshIcon size={12} />;
     cls = 'status-cloud-syncing';
-    title = detail || 'Syncing…';
+    baseTitle = detail || 'Syncing…';
   } else if (status === 'paused' || status === 'error') {
     icon = <CloudAlertIcon size={12} />;
     cls = 'status-cloud-error';
-    title = detail || (status === 'paused' ? 'Sync paused' : 'Sync error');
+    baseTitle = detail || (status === 'paused' ? 'Sync paused' : 'Sync error');
+  }
+  if (repoUrl) {
+    const title = `${baseTitle} — click to open ${repoUrl}`;
+    return (
+      <button
+        type="button"
+        className={`status-icon status-cloud ${cls} status-cloud-link`}
+        title={title}
+        aria-label={title}
+        onClick={() => window.api.openExternal(repoUrl)}
+      >
+        {icon}
+      </button>
+    );
   }
   return (
-    <span className={`status-icon status-cloud ${cls}`} title={title} aria-label={title}>
+    <span className={`status-icon status-cloud ${cls}`} title={baseTitle} aria-label={baseTitle}>
       {icon}
     </span>
   );

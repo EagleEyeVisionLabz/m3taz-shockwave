@@ -28,8 +28,9 @@ Electron app with a Vite + React 19 renderer. The renderer is a markdown-workspa
 
 | Area | File(s) | Deep doc |
 |---|---|---|
-| Main-process internals (watcher, IPC, settings, app://, coding agent, voice token) | `src/main/*.js` | `src/main/CLAUDE.md` |
-| Renderer internals (hooks, editor decorations, chat sidebar, voice, bookmarks, daily notes, quick search) | `src/renderer/**` | `src/renderer/CLAUDE.md` |
+| Main-process internals (watcher, IPC, settings, app://, coding agent, voice token, GitHub sync engine) | `src/main/*.js` | `src/main/CLAUDE.md` |
+| Renderer internals (hooks, editor decorations, chat sidebar, voice, bookmarks, daily notes, quick search, sync UI) | `src/renderer/**` | `src/renderer/CLAUDE.md` |
+| GitHub sync | `src/main/sync.js`, `src/main/syncEngine.js`, `src/renderer/settings/SyncSection.jsx`, `src/renderer/settings/WorkspaceSyncDialog.jsx` | "GitHub sync" sections in both subdocs |
 | Cross-process constants | `src/shared/constants.js` | this file, below |
 | Tests | `tests/*.test.js` | `tests/CLAUDE.md` |
 

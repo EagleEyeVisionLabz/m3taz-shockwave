@@ -21,7 +21,7 @@ const NAV = [
   { kind: 'item', id: SETTINGS_SECTIONS.DAILY_NOTE, label: 'Daily Notes' },
   { kind: 'item', id: SETTINGS_SECTIONS.SYNC, label: 'GitHub Sync' },
   { kind: 'item', id: SETTINGS_SECTIONS.TRANSCRIPTION, label: 'Transcription' },
-  { kind: 'header', label: 'AI' },
+  { kind: 'header', label: 'AI Agent' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'Agent Chat' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SKILLS, label: 'Global Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_WORKSPACE_SKILLS, label: 'Workspace Skills' },
@@ -68,9 +68,7 @@ export default function SettingsModal({
 
   const caSkills = codingAgent?.skills ?? { global: {}, workspaces: {} };
   const onSkillsChange = (nextSkills) => onCodingAgentChange?.({
-    provider: codingAgent?.provider,
-    model: codingAgent?.model,
-    apiKey: codingAgent?.apiKey,
+    ...codingAgent,
     skills: nextSkills,
   });
 

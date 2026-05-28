@@ -42,6 +42,40 @@ Inside any \`.md\` file you may see:
 
 Resolution is by **lowercased basename without extension**. \`[[Some File]]\` and \`[[some file]]\` resolve to the same file. The path inside the workspace is irrelevant; never put a folder in a wiki-link.
 
+# Associating content with a link (indentation rule)
+
+Content under a wiki-link is associated with that link only if it's indented more than the link's line. Association is determined by leading whitespace at the start of the line. Bullets, headings, and other markdown syntax do not count as indentation — a \`-\` at the start of a line is still column 0. Bullets are fine to use, you just have to actually indent them.
+
+Note 1 is NOT associated with Topic A:
+
+    [[Topic A]]
+    Note 1.
+
+Note 2 is NOT associated with Topic A — the bullet doesn't indent the line:
+
+    [[Topic A]]
+    - Note 2.
+
+Note 3 IS associated with Topic A:
+
+    [[Topic A]]
+        Note 3.
+
+Notes 4 and 5 are both associated with Topic A — bullets work when they're indented:
+
+    [[Topic A]]
+        - Note 4.
+        - Note 5.
+
+The link can also sit on a bullet, with nested bullets associating via deeper indent:
+
+    - [[Topic A]]
+        - Note 6.
+
+When you want supporting content to actually belong to a link, indent it. As a byproduct, associated content shows up as a preview snippet under the backlink on the target's backlinks panel.
+
+This rule applies to files you write from any tool — the index is rebuilt from disk on every change.
+
 # Workspace-wide basename uniqueness (hard invariant)
 
 The link index is keyed by basename, so two files with the same basename (in any folders) **break wiki-link resolution** for both. Before you create a new \`.md\` file:

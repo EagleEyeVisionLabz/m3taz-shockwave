@@ -103,6 +103,20 @@ The composer's microphone button uses `voice/useVoiceInput.js`, which streams 16
 
 **Mic permission gotcha**: Electron prompts for microphone access on the first `getUserMedia` call and persistently grants it for the origin. The Settings → Transcription "Test microphone" button (`settings/TranscriptionSection.jsx`) exists primarily so users can trigger that one-time prompt in Settings, where they expect it — without it, the first click of the chat composer's mic would prompt mid-conversation. The "Test microphone" UI also verifies the key works end-to-end.
 
+## GitHub sync (renderer side)
+
+The engine lives in main (see `src/main/CLAUDE.md`); the renderer just bridges three things.
+
+**Mount-only subscription.** `App.jsx` subscribes once on mount (no workspace dep) to two push events: `sync.onFlushRequest` and `sync.onStatus`. Same discipline as the `fs:changed` listener — do NOT add per-render objects (`writeNow`, `linkIndex`, etc.) to deps. `writeNow` is read via `writeNowRef.current()`, so the closure stays stable. If the listener tore down per render, an in-flight tick could lose its flush ack.
+
+**Engine start on workspace switch.** `loadWorkspace` calls `window.api.sync.engineStart({ workspacePath, intervalSeconds })` after `watchStart`. The engine self-checks for an origin + PAT and emits `disabled` if either's missing, so the renderer doesn't gate on those locally. The mount-effect cleanup calls `engineStop` so a full reload doesn't leave a tick running against a torn-down window.
+
+**Status icon.** `EditorStatusBar.jsx`'s `renderSyncIcon` maps the status: `CloudCheck` for idle, spinning `Refresh` for syncing, `CloudAlert` for paused/error, hidden when `disabled`. Tooltips read from `status.detail` / `status.lastSyncAt`.
+
+**Settings.** Two UI files under `settings/`:
+- `SyncSection.jsx` — global PAT (verify button hits `sync:verifyPat`), interval slider, and a git-presence check that runs once on mount.
+- `WorkspaceSyncDialog.jsx` — per-workspace setup picker (three choice cards: clone into empty, init+create new repo, adopt existing local `.git`). Launched from `WorkspacesSection.jsx`.
+
 ## Send to Agent
 
 The editor context menu offers "Message Agent" when the active file has a path on disk (`EDITOR_ACTIONS.SEND_TO_AGENT`; drafts opt out). It builds a framing snippet (`buildSendToAgentSnippet` in `App.jsx`) with a `[cwd]/...` workspace-relative path plus selection or cursor coordinates, fences any selected text in `~~~`, and injects it into the chat composer:
@@ -135,8 +149,10 @@ Settings → Daily Notes lets the user choose a dayjs format string (`YYYY-MM-DD
 `SettingsModal.jsx` is the host; each section lives in `settings/`:
 
 - `AppearanceSection.jsx` — theme mode, hide-line-numbers.
-- `WorkspacesSection.jsx` — list/add/remove/switch workspaces (folder picker via `dialog:openFolder`).
+- `WorkspacesSection.jsx` — list/add/remove/switch workspaces (folder picker via `dialog:openFolder`). Each row offers a Sync button that opens `WorkspaceSyncDialog`.
 - `DailyNoteSection.jsx` — format presets + custom format + `FolderCombobox` for the target folder.
+- `SyncSection.jsx` — global GitHub sync settings: PAT (encrypted at rest), tick interval, `sync:verifyPat` button, `sync:checkGit` presence check.
+- `WorkspaceSyncDialog.jsx` — per-workspace setup picker (three choice cards: clone into empty / init+create new / adopt existing). Launched from `WorkspacesSection.jsx`.
 - `TranscriptionSection.jsx` — AssemblyAI API key + "Test microphone" button (see Voice input above).
 - `AgentChatSection.jsx` — provider/model/API key + system prompt textarea with Reset to default. Provider + model lists are fetched live from main via `agent:listProviders` / `agent:listModels`.
 - `AiSkillsTab.jsx` (Global Skills) — drop folder / pick folder to import a SKILL.md-bearing folder into the library; enable/disable each skill globally; remove.

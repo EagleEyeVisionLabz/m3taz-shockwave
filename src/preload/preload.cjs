@@ -102,13 +102,13 @@ contextBridge.exposeInMainWorld('api', {
 
   // ---- Filesystem writes --------------------------------------------------
 
-  /** @param {string} filePath @param {string} content @returns {Promise<void>} */
+  /** @param {string} filePath @param {string} content @returns {Promise<number>} File's mtimeMs after write. */
   writeFile: (filePath, content) =>
     ipcRenderer.invoke('fs:writeFile', { filePath, content }),
   /**
    * Create a new file. Main auto-disambiguates the basename workspace-wide.
    * @param {string} dirPath @param {string} name @param {string} [content='']
-   * @returns {Promise<string>} Final absolute path used (may differ from requested if collided).
+   * @returns {Promise<{path: string, mtime: number}>} Final path + mtimeMs.
    */
   createFile: (dirPath, name, content) =>
     ipcRenderer.invoke('fs:createFile', { dirPath, name, content }),

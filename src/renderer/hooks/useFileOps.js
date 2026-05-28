@@ -45,8 +45,8 @@ export function useFileOps({
       await openInActiveTab(existing);
       return;
     }
-    const newPath = await window.api.createFile(workspacePath, `${name}.md`, '');
-    linkIndex.updateFile(newPath, '');
+    const { path: newPath, mtime } = await window.api.createFile(workspacePath, `${name}.md`, '');
+    linkIndex.updateFile(newPath, '', mtime);
     await treeAndIndexChanged();
     await openInActiveTab(newPath);
   }, [workspacePath, pageIndex, openInActiveTab, linkIndex, treeAndIndexChanged]);

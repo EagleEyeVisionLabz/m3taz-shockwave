@@ -12,6 +12,8 @@ Main-process internals. Code under `src/main/`. Cross-cutting invariants (termin
 - `agentSystemPrompt.js` — exports `DEFAULT_AGENT_SYSTEM_PROMPT`.
 - `agentTokensExtension.js` — pi extension exposing `list_agent_secrets` + `get_agent_secret`; installed via `installAgentTokensBridge` at startup.
 - `skillLibrary.js` — on-disk skill library under `<userData>/pi-agent/skill-library/<skill-name>/SKILL.md` and the workspace-override resolution.
+- `sync.js` — GitHub sync support: REST helpers (`verifyPat`, `probeWrite`, `createRepo`), URL parsing, the `gitSpawn` wrapper that injects a PAT via `GIT_ASKPASS`, git-presence check, per-workspace status, and the four setup flows (clone / init+create / adopt-existing / teardown).
+- `syncEngine.js` — singleton per-workspace tick engine. Sequential ticks (flush → commit → pull --rebase → push), status state machine, flush-renderer-dirty bridge, drain-on-quit hook.
 
 ## File watcher
 
@@ -84,13 +86,13 @@ The correlator buffers unlinks and pairs them with subsequent adds:
 
 ## Settings persistence + secrets encryption
 
-`settings.json` lives at `app.getPath('userData')/settings.json`. `DEFAULT_SETTINGS` in `main.js` is the schema. Top-level keys: `workspaces`, `activeWorkspaceId`, `appearance` (`themeMode`, `hideLineNumbers`), `dailyNote` (`format`, `folder`), `codingAgent` (`provider`, `model`, `apiKey`, `systemPrompt`, `skills.{global,workspaces}`), `agentSecrets[]`, `transcription` (`provider`, `apiKey`), `chatSidebarOpen`, `chatSidebarWidth`, `treeSortOrder`, `windowBounds`.
+`settings.json` lives at `app.getPath('userData')/settings.json`. `DEFAULT_SETTINGS` in `main.js` is the schema. Top-level keys: `workspaces`, `activeWorkspaceId`, `appearance` (`themeMode`, `hideLineNumbers`), `dailyNote` (`format`, `folder`), `codingAgent` (`provider`, `model`, `apiKey`, `systemPrompt`, `skills.{global,workspaces}`), `agentSecrets[]`, `transcription` (`provider`, `apiKey`), `sync` (`pat`, `pullIntervalSeconds`), `chatSidebarOpen`, `chatSidebarWidth`, `treeSortOrder`, `windowBounds`.
 
 Adding a persisted field means: extend `DEFAULT_SETTINGS`, extend `readSettings`'s deep merge, and update every `persistSettings()` call site in `App.jsx` (which passes the whole object on each write).
 
 `writeSettings` is serialized through `settingsWriteQueue` so concurrent writers (renderer-side `persistSettings` vs. main-side `persistWindowBounds`) can't race a partial overwrite. Writes go through tmp+rename for atomicity.
 
-Anywhere settings hold a secret (`codingAgent.apiKey`, every `agentSecrets[].token`, `transcription.apiKey`) the on-disk value is wrapped with `enc:v1:<base64>` via Electron `safeStorage` (macOS Keychain / Windows DPAPI / libsecret on Linux). `encryptSecret` is idempotent — a value already wrapped passes through unchanged — so `writeSettings` can accept a merged object that mixes plaintext (from renderer) and ciphertext (preserved from disk) without double-encrypting. Decryption happens in `readSettings`; legacy plaintext values from before encryption was wired in pass through and are auto-upgraded on the next write. On Linux without a keyring, safeStorage falls back to hardcoded-password mode and we warn once.
+Anywhere settings hold a secret (`codingAgent.apiKey`, every `agentSecrets[].token`, `transcription.apiKey`, `sync.pat`) the on-disk value is wrapped with `enc:v1:<base64>` via Electron `safeStorage` (macOS Keychain / Windows DPAPI / libsecret on Linux). `encryptSecret` is idempotent — a value already wrapped passes through unchanged — so `writeSettings` can accept a merged object that mixes plaintext (from renderer) and ciphertext (preserved from disk) without double-encrypting. Decryption happens in `readSettings`; legacy plaintext values from before encryption was wired in pass through and are auto-upgraded on the next write. On Linux without a keyring, safeStorage falls back to hardcoded-password mode and we warn once.
 
 ## `app://media/...` protocol
 
@@ -128,6 +130,46 @@ Pi pushes a user message into `state.messages` before the API call and a failure
 
 `agent:listProviders` and `agent:listModels` return pi-ai's provider/model lists filtered against `SUPPORTED_PROVIDER_SLUGS` (the bearer-key providers we support; cloud/OAuth providers like bedrock/vertex/azure/copilot are filtered out because our settings schema only carries a single API key). The list lives in `src/shared/constants.js`.
 
+## GitHub sync
+
+Per-workspace background sync to GitHub. Two files: `sync.js` (one-shot helpers + setup) and `syncEngine.js` (the singleton tick loop).
+
+### Auth model
+
+PAT is stored encrypted in `settings.sync.pat` (`enc:v1:` via `safeStorage`). For shell git, the decrypted PAT is set on the child process's `GITHUB_PAT` env, and `GIT_ASKPASS` points at `<userData>/sync/askpass.sh` — a tiny posix helper that echoes `x-access-token` for `Username` prompts and `$GITHUB_PAT` for everything else. The PAT lives in process memory only for the lifetime of that one git child. **Never written to `.git/config`**; remote URLs stay plain `https://github.com/owner/repo.git`. REST calls use a `Bearer` header with the same memory-only lifetime.
+
+### Tick (sequential, never overlapping)
+
+1. `sync:flushRequest(token)` → renderer flushes dirty editor tabs → `sync:flushDone(token)`. **1 s timeout** so a hung renderer can't stall the engine.
+2. `git status --porcelain`; if dirty → `git add -A` + commit (message `Shockwave sync: <ISO>`).
+3. `git ls-remote --heads origin <branch>` — skips the pull on a freshly-init'd repo that has no remote branch yet.
+4. If the remote has the branch → `git pull --rebase --autostash origin <branch>`. After it, check for `.git/rebase-merge` or `.git/rebase-apply` — if either exists, status becomes `paused` and ticking stops.
+5. `git push --set-upstream origin <branch>`.
+
+### Status state machine
+
+`sync:status` push event carries `{ status, detail, lastSyncAt }`:
+
+- `disabled` — workspace has no origin, or no PAT configured. Icon hides.
+- `idle` — last tick succeeded, waiting for next.
+- `syncing` — a tick is in progress; `detail` describes the current step.
+- `paused` — paused rebase OR auth failure. **No retry loop** — user must resolve and either resume (path not wired yet) or fix the PAT.
+- `error` — transient (network, generic git failure). Next tick retries automatically.
+
+### Lifecycle
+
+- `start({ workspacePath, pat, intervalSeconds, windowId })` — stops any previous instance, self-checks origin + PAT, kicks the interval. **First tick fires immediately** so a workspace switch doesn't wait up to `intervalSeconds` before picking up remote changes.
+- `stop()` — clears the interval and awaits the in-flight tick (so a partial commit/push never leaks).
+- `drainBeforeQuit()` — called from `before-quit`. Same as `stop()` minus the disabled-status emit. Without this, a fast Cmd+Q could kill a child mid-push.
+
+### Flush bridge
+
+`requestFlush()` posts a token to the renderer and resolves either when the renderer acks via `sync:flushDone(token)` or when the 1 s timeout fires. Pending flushes are tracked in a `Map` keyed by token. The renderer subscribes once on mount (not per workspace) and reads `writeNow` via a ref — same discipline as the `fs:changed` listener.
+
+### Platform gap
+
+The askpass helper is posix-only (`.sh`). The engine refuses to start on `win32` until a `.cmd` variant is wired in. No-op safe to call from cross-platform code; status just stays `disabled`.
+
 ## Voice transcription IPC
 
 `voice:getToken` mints a short-lived (60s) AssemblyAI streaming token. The long-lived API key (`settings.transcription.apiKey`) never leaves main — the renderer requests a fresh streaming token on each WebSocket connection. The actual WebSocket + audio pipeline lives in the renderer; see `src/renderer/CLAUDE.md`.
@@ -146,5 +188,6 @@ Pi pushes a user message into `state.messages` before the API call and a failure
 | Voice | `voice:getToken` |
 | Agent | `agent:send`, `agent:abort`, `agent:reset`, `agent:getDefaultSystemPrompt`, `agent:listProviders`, `agent:listModels`; plus push events: `agent:event` (per pi event), `agent:error` |
 | Skills | `skills:list`, `skills:libraryDir`, `skills:importPicker`, `skills:importFromPath`, `skills:remove` |
+| Sync | `sync:verifyPat`, `sync:checkGit`, `sync:workspaceStatus`, `sync:setupClone`, `sync:setupInitAndCreate`, `sync:setupExistingLocal`, `sync:teardown`, `sync:engineStart`, `sync:engineStop`, `sync:engineStatus`, `sync:flushDone`; plus push events `sync:status`, `sync:flushRequest` |
 
 The renderer reaches every one of these via `window.api.*` — see `src/preload/preload.cjs`. The renderer never touches Node directly.
