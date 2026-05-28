@@ -14,8 +14,6 @@ your own GitHub repo for free.
 
 ---
 
-<h3><img src="docs/ai-architects.png" width="34" align="top" alt="" />&nbsp;<a href="https://skool.com/ai-architects">AI Architects</a></h3>
-
 Want to learn to build apps like this? Join the <a href="https://skool.com/ai-architects">AI Architects</a>.
 
 ---
