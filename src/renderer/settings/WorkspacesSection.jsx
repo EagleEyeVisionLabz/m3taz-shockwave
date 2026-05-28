@@ -11,6 +11,8 @@ export default function WorkspacesSection({
   onRemove,
   syncPat,
   pullIntervalSeconds,
+  disabledWorkspaceIds,
+  onSyncDisabledChange,
 }) {
   const [confirmRemoveId, setConfirmRemoveId] = useState(null);
   const [syncWorkspaceId, setSyncWorkspaceId] = useState(null);
@@ -83,6 +85,8 @@ export default function WorkspacesSection({
         syncPat={syncPat}
         activeWorkspaceId={activeWorkspaceId}
         pullIntervalSeconds={pullIntervalSeconds}
+        disabledWorkspaceIds={disabledWorkspaceIds}
+        onSyncDisabledChange={onSyncDisabledChange}
         onClose={() => setSyncWorkspaceId(null)}
       />
     </div>

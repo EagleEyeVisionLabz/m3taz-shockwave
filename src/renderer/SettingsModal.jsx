@@ -54,6 +54,7 @@ export default function SettingsModal({
   onTranscriptionChange,
   sync,
   onSyncChange,
+  onSyncDisabledChange,
   saveStatus,
 }) {
   const [active, setActive] = useState(initialSection || DEFAULT_SECTION);
@@ -124,6 +125,8 @@ export default function SettingsModal({
               onRemove={onRemoveWorkspace}
               syncPat={sync?.pat}
               pullIntervalSeconds={sync?.pullIntervalSeconds}
+              disabledWorkspaceIds={sync?.disabledWorkspaceIds || []}
+              onSyncDisabledChange={onSyncDisabledChange}
             />
           )}
           {active === SETTINGS_SECTIONS.DAILY_NOTE && (

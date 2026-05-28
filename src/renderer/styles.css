@@ -2045,6 +2045,62 @@ html, body, #root {
   color: var(--fg-muted);
 }
 
+.sync-repo-list {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+}
+
+.sync-repo-empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.sync-repo-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  color: var(--fg-primary);
+  text-align: left;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.sync-repo-item:hover {
+  background: var(--bg-hover);
+}
+
+.sync-repo-item.is-selected {
+  background: var(--bg-hover);
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.sync-repo-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sync-repo-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--fg-muted);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
 /* ---------- GitHub sync status icon ---------- */
 
 .editor-status-bar .status-cloud {

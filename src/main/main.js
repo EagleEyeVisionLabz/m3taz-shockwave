@@ -18,8 +18,9 @@ import {
   workspaceStatus as syncWorkspaceStatus,
   setupClone as syncSetupClone,
   setupInitAndCreate as syncSetupInitAndCreate,
-  setupExistingLocal as syncSetupExistingLocal,
+  setupLink as syncSetupLink,
   teardown as syncTeardown,
+  listRepos as syncListRepos,
 } from './sync.js';
 import {
   start as engineStart,
@@ -105,7 +106,7 @@ const DEFAULT_SETTINGS = {
   // via safeStorage. Decrypted only into the env of git child processes (via
   // GIT_ASKPASS helper); never written to .git/config or any other on-disk
   // location. `pullIntervalSeconds` is the tick cadence for the sync loop.
-  sync: { pat: '', pullIntervalSeconds: 10 },
+  sync: { pat: '', pullIntervalSeconds: 10, disabledWorkspaceIds: [] },
   chatSidebarOpen: false,
   chatSidebarWidth: 360,
   // File-tree sort order. One of: 'name-asc' | 'name-desc' | 'modified-desc' |
@@ -185,6 +186,9 @@ async function readSettings() {
       sync: {
         ...DEFAULT_SETTINGS.sync,
         ...(parsed.sync ?? {}),
+        disabledWorkspaceIds: Array.isArray(parsed.sync?.disabledWorkspaceIds)
+          ? parsed.sync.disabledWorkspaceIds
+          : [],
       },
     };
     // Decrypt secret-bearing fields. Legacy plaintext values pass through
@@ -907,14 +911,23 @@ ipcMain.handle('sync:setupInitAndCreate', async (_evt, { workspacePath, repoName
   return syncSetupInitAndCreate({ workspacePath, repoName, private: isPrivate, pat: auth.pat });
 });
 
-ipcMain.handle('sync:setupExistingLocal', async (_evt, { workspacePath }) => {
+ipcMain.handle('sync:setupLink', async (_evt, { workspacePath, remoteUrl }) => {
   const auth = await readSyncPat();
   if (!auth.ok) return auth;
-  return syncSetupExistingLocal({ workspacePath, pat: auth.pat });
+  return syncSetupLink({ workspacePath, remoteUrl, pat: auth.pat });
 });
 
 ipcMain.handle('sync:teardown', async (_evt, { workspacePath }) => {
   return syncTeardown({ workspacePath });
+});
+
+// List repos visible to the configured PAT, for the per-workspace "link to
+// existing repo" picker. PAT is read from settings here so the renderer never
+// touches it.
+ipcMain.handle('sync:listRepos', async () => {
+  const auth = await readSyncPat();
+  if (!auth.ok) return auth;
+  return syncListRepos(auth.pat);
 });
 
 // ---- Sync engine lifecycle ----
@@ -926,13 +939,55 @@ ipcMain.handle('sync:teardown', async (_evt, { workspacePath }) => {
 ipcMain.handle('sync:engineStart', async (evt, { workspacePath, intervalSeconds }) => {
   const settings = await readSettings();
   const pat = settings.sync?.pat || '';
+  const wsId = (settings.workspaces || []).find((w) => w.path === workspacePath)?.id ?? null;
+  const disabledIds = settings.sync?.disabledWorkspaceIds || [];
   const win = BrowserWindow.fromWebContents(evt.sender);
+  // User paused sync for this workspace → don't start the engine. engineStop
+  // emits a `disabled` status (icon hidden) which matches the rest of the
+  // "not syncing" cases. Origin stays in .git/config so re-enabling is a
+  // single engineStart with no setup required.
+  if (wsId && disabledIds.includes(wsId)) {
+    await engineStop();
+    return;
+  }
   await engineStart({
     workspacePath,
     pat,
     intervalSeconds: intervalSeconds ?? settings.sync?.pullIntervalSeconds ?? 10,
     windowId: win?.id ?? null,
   });
+});
+
+// Toggle per-workspace sync. Persists the flag; if this is the active
+// workspace, reconciles by stopping or starting the engine. Origin is left
+// in .git/config either way so re-enable is a no-touch resume.
+ipcMain.handle('sync:setWorkspaceDisabled', async (evt, { workspacePath, disabled }) => {
+  const settings = await readSettings();
+  const wsId = (settings.workspaces || []).find((w) => w.path === workspacePath)?.id ?? null;
+  if (!wsId) return { ok: false, error: 'Workspace not found in settings' };
+  const cur = new Set(settings.sync?.disabledWorkspaceIds || []);
+  if (disabled) cur.add(wsId);
+  else cur.delete(wsId);
+  const nextSync = { ...settings.sync, disabledWorkspaceIds: [...cur] };
+  await writeSettings({ sync: nextSync });
+
+  // Reconcile only if this is the active workspace. The engine is bound to
+  // one workspace at a time; touching engine state for a non-active one
+  // would yank the engine away from the workspace the user is editing.
+  if (settings.activeWorkspaceId === wsId) {
+    if (disabled) {
+      await engineStop();
+    } else {
+      const win = BrowserWindow.fromWebContents(evt.sender);
+      await engineStart({
+        workspacePath,
+        pat: nextSync.pat || '',
+        intervalSeconds: nextSync.pullIntervalSeconds ?? 10,
+        windowId: win?.id ?? null,
+      });
+    }
+  }
+  return { ok: true };
 });
 
 ipcMain.handle('sync:engineStop', async () => {

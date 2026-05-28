@@ -309,18 +309,28 @@ contextBridge.exposeInMainWorld('api', {
      *  @param {{ workspacePath: string, remoteUrl: string }} opts
      *  @returns {Promise<{ ok: boolean, remoteUrl?: string, error?: string }>} */
     setupClone: (opts) => ipcRenderer.invoke('sync:setupClone', opts),
+    /** List repos visible to the configured PAT (sorted by pushed_at desc). PAT pulled from settings.
+     *  @returns {Promise<{ ok: boolean, repos?: Array<{ full_name: string, clone_url: string, private: boolean, default_branch: string, pushed_at: string }>, error?: string }>} */
+    listRepos: () => ipcRenderer.invoke('sync:listRepos'),
     /** Create a new GitHub repo and wire the workspace to it. PAT pulled from settings.
      *  @param {{ workspacePath: string, repoName: string, private?: boolean }} opts
      *  @returns {Promise<{ ok: boolean, remoteUrl?: string, full_name?: string, html_url?: string, error?: string }>} */
     setupInitAndCreate: (opts) => ipcRenderer.invoke('sync:setupInitAndCreate', opts),
-    /** Adopt a workspace that already has .git/origin set up locally.
-     *  @param {{ workspacePath: string }} opts
+    /** Link a workspace to an existing GitHub repo without cloning. Runs
+     *  git init (if needed) + git remote add/set-url origin. PAT pulled from settings.
+     *  @param {{ workspacePath: string, remoteUrl: string }} opts
      *  @returns {Promise<{ ok: boolean, remoteUrl?: string, error?: string }>} */
-    setupExistingLocal: (opts) => ipcRenderer.invoke('sync:setupExistingLocal', opts),
+    setupLink: (opts) => ipcRenderer.invoke('sync:setupLink', opts),
     /** Remove origin from the workspace (leaves .git/ in place).
      *  @param {{ workspacePath: string }} opts
      *  @returns {Promise<{ ok: boolean, error?: string }>} */
     teardown: (opts) => ipcRenderer.invoke('sync:teardown', opts),
+    /** Toggle the per-workspace "user paused" flag. Persists the flag and
+     *  restarts the engine if this is the active workspace. Origin is left in
+     *  place so re-enabling is a no-touch resume.
+     *  @param {{ workspacePath: string, disabled: boolean }} opts
+     *  @returns {Promise<{ ok: boolean, error?: string }>} */
+    setWorkspaceDisabled: (opts) => ipcRenderer.invoke('sync:setWorkspaceDisabled', opts),
 
     /** Start the sync engine for `workspacePath`. Stops any previous instance.
      *  @param {{ workspacePath: string, intervalSeconds?: number }} opts

@@ -152,7 +152,7 @@ export default function App() {
   // GitHub sync config. PAT arrives decrypted from main and is sent back as
   // plaintext on every save (main re-encrypts via safeStorage's idempotent
   // encryptSecret).
-  const [sync, setSync] = useState({ pat: '', pullIntervalSeconds: 10 });
+  const [sync, setSync] = useState({ pat: '', pullIntervalSeconds: 10, disabledWorkspaceIds: [] });
   const syncRef = useSyncRef(sync);
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
@@ -768,6 +768,20 @@ export default function App() {
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, transcription: next });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
+  // Per-workspace sync disable/enable toggle. The IPC handles persistence +
+  // engine reconciliation; we just mirror the new disabled-set into local
+  // state so the Settings UI re-renders with the right button labels.
+  const onSyncDisabledChange = useCallback((workspaceId, disabled) => {
+    setSync((prev) => {
+      const cur = new Set(prev.disabledWorkspaceIds || []);
+      if (disabled) cur.add(workspaceId);
+      else cur.delete(workspaceId);
+      const next = { ...prev, disabledWorkspaceIds: [...cur] };
+      syncRef.current = next;
+      return next;
+    });
+  }, []);
+
   const onSyncChange = useCallback(async (next) => {
     setSync(next);
     syncRef.current = next;
@@ -1233,6 +1247,9 @@ export default function App() {
             typeof settings.sync.pullIntervalSeconds === 'number' && settings.sync.pullIntervalSeconds > 0
               ? settings.sync.pullIntervalSeconds
               : 10,
+          disabledWorkspaceIds: Array.isArray(settings.sync.disabledWorkspaceIds)
+            ? settings.sync.disabledWorkspaceIds
+            : [],
         };
         setSync(s);
         syncRef.current = s;
@@ -1801,6 +1818,7 @@ export default function App() {
           onTranscriptionChange={onTranscriptionChange}
           sync={sync}
           onSyncChange={onSyncChange}
+          onSyncDisabledChange={onSyncDisabledChange}
           saveStatus={saveStatus}
         />
       )}

@@ -43,6 +43,44 @@ export async function verifyPat(pat) {
 }
 
 /**
+ * GET /user/repos. Paginated list of repos the PAT can see (owner +
+ * collaborator + org member). Used by the renderer to populate the
+ * "link to existing repo" picker so the user can pick instead of pasting
+ * a URL. Returns a flat array sorted by `pushed` so most-recently-active
+ * repos surface first. Caps at 5 pages (500 repos) — the listing is for
+ * a UI picker, not a complete inventory.
+ */
+export async function listRepos(pat) {
+  if (!pat) return { ok: false, error: 'No token provided' };
+  const out = [];
+  const perPage = 100;
+  const maxPages = 5;
+  try {
+    for (let page = 1; page <= maxPages; page++) {
+      const url = `${GITHUB_API}/user/repos?per_page=${perPage}&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`;
+      const res = await fetch(url, { headers: API_HEADERS(pat) });
+      if (res.status === 401) return { ok: false, error: 'Invalid or expired token' };
+      if (!res.ok) return { ok: false, error: `GitHub returned ${res.status}` };
+      const batch = await res.json();
+      if (!Array.isArray(batch) || batch.length === 0) break;
+      for (const r of batch) {
+        out.push({
+          full_name: r.full_name,
+          clone_url: r.clone_url,
+          private: !!r.private,
+          default_branch: r.default_branch,
+          pushed_at: r.pushed_at,
+        });
+      }
+      if (batch.length < perPage) break;
+    }
+    return { ok: true, repos: out };
+  } catch (err) {
+    return { ok: false, error: `Network error: ${err.message}` };
+  }
+}
+
+/**
  * Probe whether the PAT has Contents:Write on a repo. Creates a ref pointing
  * at the null SHA — 422 means git accepted the request (we have write but
  * the SHA is invalid; nothing is created), 403 means the token lacks the
@@ -362,22 +400,40 @@ export async function setupInitAndCreate({ workspacePath, repoName, pat, private
 }
 
 /**
- * Workspace already has a .git/ with an origin (the user cloned it themselves
- * or set up sync elsewhere). Just verify and adopt; set our identity for
- * future commits.
+ * Link this workspace to an existing GitHub repo without cloning. Use when
+ * the workspace folder already has files (or even already has a .git/) and
+ * you just want to attach it to a remote. The first sync tick handles the
+ * commit + pull --rebase + push dance. Idempotent across:
+ *   - no .git/ → `git init` creates it
+ *   - .git/ with no origin → `git remote add origin`
+ *   - .git/ with a different origin → `git remote set-url origin`
  */
-export async function setupExistingLocal({ workspacePath, pat }) {
-  const status = await workspaceStatus(workspacePath);
-  if (!status.hasGit) return { ok: false, error: 'No .git folder found in this workspace' };
-  if (!status.hasOrigin) return { ok: false, error: 'No origin remote configured' };
-  const parsed = parseGithubUrl(status.originUrl);
-  if (!parsed) return { ok: false, error: 'Origin is not a GitHub URL: ' + status.originUrl };
-  // Verify we can write to it.
+export async function setupLink({ workspacePath, remoteUrl, pat }) {
+  const parsed = parseGithubUrl(remoteUrl);
+  if (!parsed) return { ok: false, error: 'Not a valid GitHub URL' };
+  const url = cloneUrlFor(parsed.owner, parsed.repo);
+
+  // Verify we can write to the chosen repo before we touch git config.
   const probe = await probeWrite(parsed.owner, parsed.repo, pat);
   if (!probe.ok) return probe;
+
+  const status = await workspaceStatus(workspacePath);
+  if (!status.hasGit) {
+    const init = await gitSpawn(workspacePath, ['init', '-b', 'main'], { timeoutMs: 5000 });
+    if (!init.ok) return { ok: false, error: init.stderr.trim() || 'git init failed' };
+  }
+  if (status.hasOrigin) {
+    const reset = await gitSpawn(workspacePath, ['remote', 'set-url', 'origin', url], { timeoutMs: 5000 });
+    if (!reset.ok) return { ok: false, error: reset.stderr.trim() };
+  } else {
+    const add = await gitSpawn(workspacePath, ['remote', 'add', 'origin', url], { timeoutMs: 5000 });
+    if (!add.ok) return { ok: false, error: add.stderr.trim() };
+  }
+
   const who = await verifyPat(pat);
   if (who.ok) await setLocalIdentity(workspacePath, who.login, who.id);
-  return { ok: true, remoteUrl: status.originUrl };
+
+  return { ok: true, remoteUrl: url };
 }
 
 /**
