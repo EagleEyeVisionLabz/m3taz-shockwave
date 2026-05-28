@@ -1,6 +1,6 @@
 <div align="center">
 
-# Shockwave
+<h1><img src="build/icon.png" width="40" align="top" alt="" />&nbsp;Shockwave</h1>
 
 **An Obsidian-style markdown editor with a built-in AI agent — and free sync.**
 
