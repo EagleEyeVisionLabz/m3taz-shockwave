@@ -17,7 +17,6 @@ import Dialog from './Dialog.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
-import { formatDailyNote, resolveDailyNotePath } from './dailyNote.js';
 import { basenameOf, dirOf } from './pathUtils.js';
 import { diffWordsWithSpace } from 'diff';
 import { rangesAddedFromDiff } from './diffFlash.js';
@@ -30,6 +29,7 @@ import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
 import { useSyncRef } from './hooks/useSyncRef';
 import { useBookmarks, filterTreeToBookmarks } from './hooks/useBookmarks';
+import { useDailyNote } from './hooks/useDailyNote';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -101,7 +101,6 @@ export default function App() {
   // resolver. `initialUrl` / `initialText` (Edit mode) optionally pre-fill the
   // form. Resolver receives { url, text } | null.
   const [urlPromptOpts, setUrlPromptOpts] = useState(null);
-  const [journalPickerAnchor, setJournalPickerAnchor] = useState(null);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   // Bookmarks live in useBookmarks (called below, after workspacePath + showError
   // exist). sortedTree is defined there too, since it consumes the bookmark set.
@@ -815,36 +814,15 @@ export default function App() {
   }, [workspacePath, selectedFolderPath, createFolderAt]);
 
   // ---- journal (calendar in thin sidebar) ----
-  // openJournal(date?) — opens (or creates) the daily note for `date` (default
-  // today) using the user's configured format + folder. If the format contains
-  // "/" the leading segments become subfolders. Existing notes are opened in
-  // place regardless of where they live (basename uniqueness is workspace-wide).
-  const openJournal = useCallback(async (date) => {
-    if (!workspacePath) return;
-    const d = date ?? new Date();
-    const dn = dailyNoteRef.current;
-    const formatted = formatDailyNote(dn.format, d);
-    if (!formatted) {
-      showError('Daily note format is invalid. Open Settings → Daily Note to fix it.');
-      return;
-    }
-    const { dir, name } = resolveDailyNotePath(workspacePath, dn.folder, formatted);
-    try {
-      await writeNow();
-      const existing = linkIndex.pageIndexRef.current.get(name.toLowerCase());
-      if (existing) {
-        await openInActiveTab(existing);
-        return;
-      }
-      await window.api.ensureDir(dir);
-      const { path: newPath, mtime } = await window.api.createFile(dir, `${name}.md`, '');
-      linkIndex.updateFile(newPath, '', mtime);
-      await fileOps.treeAndIndexChanged();
-      await openInActiveTab(newPath);
-    } catch (err) {
-      showError(err.message ?? String(err));
-    }
-  }, [workspacePath, writeNow, linkIndex, openInActiveTab, fileOps, showError]);
+  const { journalPickerAnchor, setJournalPickerAnchor, openJournal } = useDailyNote({
+    workspacePath,
+    dailyNoteRef,
+    writeNow,
+    openInActiveTab,
+    linkIndex,
+    fileOps,
+    showError,
+  });
 
   // ---- handle drag-and-drop moves from the tree ----
   // dragIds = list of source paths (files or folders). destFolderId is the destination
