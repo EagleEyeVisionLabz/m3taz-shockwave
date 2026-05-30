@@ -216,8 +216,8 @@ export function checkGit() {
 // ever has to answer the password prompt — but we handle both forms anyway
 // so the prompt-shape variations across git versions don't trip us up.
 //
-// macOS/Linux: posix shell script. Windows: TODO (cmd/bat variant) — for now
-// sync engine will refuse to start on win32 until that's wired.
+// macOS/Linux: a posix shell script. Windows: a .cmd batch file. ensureAskpass
+// writes the right one for the host platform.
 
 let askpassPathCache = null;
 
@@ -229,6 +229,30 @@ async function ensureAskpass() {
   if (askpassPathCache) return askpassPathCache;
   const dir = await askpassDir();
   await fs.mkdir(dir, { recursive: true });
+
+  if (process.platform === 'win32') {
+    // Batch variant for Windows git. Git invokes the helper with one quoted
+    // arg (the prompt, e.g. "Username for 'https://github.com': "); %~1 strips
+    // the surrounding quotes. We answer x-access-token for the Username prompt
+    // and the PAT (from the env var main set on the spawn) for everything else.
+    // `if not errorlevel 1` is the batch idiom for "errorlevel == 0" (matched).
+    // CRLF line endings — cmd.exe is picky about bare LF.
+    const winFile = path.join(dir, 'askpass.cmd');
+    const winBody = [
+      '@echo off',
+      'echo %~1| findstr /B /C:"Username" >nul',
+      'if not errorlevel 1 (',
+      '  echo x-access-token',
+      ') else (',
+      '  echo %GITHUB_PAT%',
+      ')',
+      '',
+    ].join('\r\n');
+    await fs.writeFile(winFile, winBody);
+    askpassPathCache = winFile;
+    return winFile;
+  }
+
   const file = path.join(dir, 'askpass.sh');
   const body = '#!/bin/sh\n' +
     '# GIT_ASKPASS helper. Git invokes this with one arg like\n' +
@@ -280,7 +304,7 @@ export async function gitSpawn(cwd, args, { pat = null, timeoutMs = 60000 } = {}
     }
     if (timeoutMs > 0) {
       timer = setTimeout(() => {
-        try { child.kill('SIGKILL'); } catch {}
+        try { child.kill('SIGKILL'); } catch { /* child may have already exited */ }
       }, timeoutMs);
     }
     child.stdout.on('data', (b) => { stdout += b.toString(); });

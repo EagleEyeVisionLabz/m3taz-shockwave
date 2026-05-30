@@ -98,11 +98,11 @@ async function isRebasePaused(workspacePath) {
   try {
     await fs.access(path.join(workspacePath, '.git', 'rebase-merge'));
     return true;
-  } catch {}
+  } catch { /* access throws = dir absent = not paused */ }
   try {
     await fs.access(path.join(workspacePath, '.git', 'rebase-apply'));
     return true;
-  } catch {}
+  } catch { /* access throws = dir absent = not paused */ }
   return false;
 }
 

@@ -1076,11 +1076,11 @@ ipcMain.handle('skills:remove', async (_evt, folderName) => {
 });
 
 ipcMain.handle('agent:abort', async () => {
-  try { await agentAbort(); } catch {}
+  try { await agentAbort(); } catch { /* abort is best-effort */ }
 });
 
 ipcMain.handle('agent:reset', async () => {
-  try { await agentReset(); } catch {}
+  try { await agentReset(); } catch { /* reset is best-effort */ }
 });
 
 ipcMain.handle('agent:getDefaultSystemPrompt', async () => DEFAULT_AGENT_SYSTEM_PROMPT);

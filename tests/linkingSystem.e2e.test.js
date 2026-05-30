@@ -103,7 +103,7 @@ async function setupWorkspace(initialFiles) {
         try {
           const content = await fs.readFile(evt.newPath, 'utf8');
           linkIndex.updateFile(evt.newPath, content);
-        } catch {}
+        } catch { /* file may be gone in delete-race scenarios */ }
       }
       return;
     }

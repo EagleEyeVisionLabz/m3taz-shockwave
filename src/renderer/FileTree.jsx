@@ -80,7 +80,6 @@ const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
 
 function Node({ node, tree, style, dragHandle, onFileAction, onFolderAction, getIsBookmarked, isBookmarked }) {
   const isFolder = node.isInternal;
-  const isMd = !isFolder && node.data.name.toLowerCase().endsWith('.md');
   const isImage = !isFolder && IMAGE_EXT_RE.test(node.data.name);
   const willReceiveDrop = isFolder && node.willReceiveDrop;
 

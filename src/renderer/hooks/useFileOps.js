@@ -6,7 +6,6 @@ export function useFileOps({
   workspacePath,
   pageIndex,
   linkIndex,        // from useLinkIndex
-  tabs,             // from useTabs
   writeNow,
   openInActiveTab,
   openInNewTab,

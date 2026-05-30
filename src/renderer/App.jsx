@@ -192,7 +192,8 @@ export default function App() {
   // the same token. Status events update the status-bar icon.
   useEffect(() => {
     const unsubFlush = window.api.sync.onFlushRequest(async (token) => {
-      try { await writeNowRef.current(); } catch {}
+      // Best-effort flush before sync acks; log so a failed save isn't silent.
+      try { await writeNowRef.current(); } catch (e) { console.warn('sync flush save failed:', e); }
       window.api.sync.flushDone(token).catch(() => {});
     });
     const unsubStatus = window.api.sync.onStatus((s) => setSyncStatus(s));
@@ -486,7 +487,7 @@ export default function App() {
           setSaveStatus('idle');
         }, 1500);
       }
-    } catch (err) {
+    } catch {
       inFlightSavesRef.current -= 1;
       setSaveStatus('error');
     }
@@ -1086,6 +1087,11 @@ export default function App() {
   // every time the user switches tabs.
   const activeFileRef = useSyncRef(activeFile);
   const activeIsDraftRef = useSyncRef(activeIsDraft);
+  // Bookmark sync on external/echoed rename + delete, read via refs so the
+  // watcher subscription stays stable.
+  const renameBookmarkPathRef = useSyncRef(renameBookmarkPath);
+  const removeBookmarkPathRef = useSyncRef(removeBookmarkPath);
+  const persistBookmarksRef = useSyncRef(persistBookmarks);
 
   useEffect(() => {
     if (!workspacePath) return undefined;
@@ -1099,21 +1105,13 @@ export default function App() {
     };
     const unsub = window.api.onFsChanged((evt) => {
       const li = linkIndexRefForWatcher.current;
-      // TEMP diagnostic — log every event that touches the active tab.
-      const af = activeFileRef.current;
-      const touchesActive =
-        (evt.type === 'rename' && (evt.oldPath === af || evt.newPath === af)) ||
-        (evt.type !== 'rename' && evt.path === af);
-      if (touchesActive) {
-        // eslint-disable-next-line no-console
-        console.log('[sync-rename renderer] fs:changed touches active tab', { activeFile: af, evt });
-      }
       if (evt.type === 'tree') {
         scheduleRefresh();
         return;
       }
       if (evt.type === 'unlink') {
         li.removeFile(evt.path);
+        if (removeBookmarkPathRef.current(evt.path)) persistBookmarksRef.current();
         scheduleRefresh();
         return;
       }
@@ -1127,6 +1125,8 @@ export default function App() {
         }
         // 3) Update any open tabs pointing at the old path.
         renameTabsPathRef.current(evt.oldPath, evt.newPath);
+        // 3b) Keep the bookmark set in sync if the renamed file was bookmarked.
+        if (renameBookmarkPathRef.current(evt.oldPath, evt.newPath)) persistBookmarksRef.current();
         // 4) Rewrite `[[OldName]]` references in other files. Idempotent — if
         //    the rename was in-app, these were already rewritten and the regex
         //    matches nothing on the watcher echo.
@@ -1183,7 +1183,7 @@ export default function App() {
             const changes = diffWordsWithSpace(oldText, newText);
             const ranges = rangesAddedFromDiff(changes);
             if (ranges.length > 0) editor.flashRanges(ranges);
-          } catch (err) {
+          } catch {
             // File may have been deleted or moved before we could read it.
           }
         })();

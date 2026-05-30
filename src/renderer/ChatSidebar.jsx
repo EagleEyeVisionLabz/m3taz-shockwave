@@ -463,11 +463,11 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
   }, [input, partialText, attachments, running, workspacePath]);
 
   const onStop = useCallback(async () => {
-    try { await window.api.agent.abort(); } catch {}
+    try { await window.api.agent.abort(); } catch { /* abort is best-effort */ }
   }, []);
 
   const onClear = useCallback(async () => {
-    try { await window.api.agent.reset(); } catch {}
+    try { await window.api.agent.reset(); } catch { /* reset is best-effort */ }
     if (tickerRef.current) { clearInterval(tickerRef.current); tickerRef.current = null; }
     currentAssistantIdRef.current = null;
     lastSentUserIdRef.current = null;
@@ -625,7 +625,7 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
       if (!el) return;
       el.focus();
       const len = el.value.length;
-      try { el.setSelectionRange(len, len); } catch {}
+      try { el.setSelectionRange(len, len); } catch { /* selection is cosmetic */ }
     },
   }), [input]);
 
@@ -640,7 +640,7 @@ const ChatSidebar = forwardRef(function ChatSidebar({ onClose, workspacePath }, 
     if (!el) return;
     el.focus();
     const len = el.value.length;
-    try { el.setSelectionRange(len, len); } catch {}
+    try { el.setSelectionRange(len, len); } catch { /* selection is cosmetic */ }
   }, []);
 
   return (

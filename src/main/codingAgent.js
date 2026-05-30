@@ -30,11 +30,11 @@ function makeKey({ workspacePath, provider, model, apiKey, systemPrompt }) {
 
 async function teardown() {
   if (state.unsubscribe) {
-    try { state.unsubscribe(); } catch {}
+    try { state.unsubscribe(); } catch { /* already unsubscribed */ }
     state.unsubscribe = null;
   }
   if (state.session) {
-    try { await state.session.abort(); } catch {}
+    try { await state.session.abort(); } catch { /* best-effort; session may already be stopped */ }
     state.session = null;
     state.key = null;
   }
@@ -94,7 +94,7 @@ async function ensureSession({ workspacePath, provider, model, apiKey, systemPro
 }
 
 export async function agentSend(opts, emitEvent) {
-  const { text, images, workspacePath, provider, model, apiKey, systemPrompt } = opts;
+  const { text, images, workspacePath, provider, model, apiKey } = opts;
   if (!workspacePath) throw new Error('Open a workspace first.');
   if (!provider) throw new Error('Coding agent provider not configured.');
   if (!model) throw new Error('Coding agent model not configured.');
@@ -144,7 +144,7 @@ export async function agentSend(opts, emitEvent) {
 
 export async function agentAbort() {
   if (state.session) {
-    try { await state.session.abort(); } catch {}
+    try { await state.session.abort(); } catch { /* best-effort; session may already be stopped */ }
   }
 }
 

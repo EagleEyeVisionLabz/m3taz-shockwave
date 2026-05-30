@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 // Collect every folder path relative to the workspace root, sorted.
 // '/' (root) is included as the first option.
-function collectFolders(tree, basePath) {
+function collectFolders(tree) {
   const out = ['/'];
   const walk = (nodes, prefix) => {
     for (const n of nodes) {

@@ -118,6 +118,6 @@ export async function walkMarkdownPaths(root, { skipSymlinks = true } = {}) {
     const st = await fs.stat(root);
     if (st.isDirectory()) await walk(root);
     else if (isMdFile(root)) out.push(root);
-  } catch {}
+  } catch { /* unreadable/missing root → return what we collected */ }
   return out;
 }

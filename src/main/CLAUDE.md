@@ -166,9 +166,9 @@ PAT is stored encrypted in `settings.sync.pat` (`enc:v1:` via `safeStorage`). Fo
 
 `requestFlush()` posts a token to the renderer and resolves either when the renderer acks via `sync:flushDone(token)` or when the 1 s timeout fires. Pending flushes are tracked in a `Map` keyed by token. The renderer subscribes once on mount (not per workspace) and reads `writeNow` via a ref — same discipline as the `fs:changed` listener.
 
-### Platform gap
+### Platform support
 
-The askpass helper is posix-only (`.sh`). The engine refuses to start on `win32` until a `.cmd` variant is wired in. No-op safe to call from cross-platform code; status just stays `disabled`.
+`ensureAskpass` writes the right credential helper for the host: a posix `.sh` on macOS/Linux, a `.cmd` batch file on Windows (both answer `x-access-token` for the `Username` prompt and `$GITHUB_PAT`/`%GITHUB_PAT%` for the password). `gitSpawn` is otherwise platform-agnostic, so sync runs on all three platforms wherever `git` is on PATH.
 
 ## Voice transcription IPC
 
