@@ -30,6 +30,7 @@ import { useFileOps } from './hooks/useFileOps.js';
 import { useSyncRef } from './hooks/useSyncRef';
 import { useBookmarks, filterTreeToBookmarks } from './hooks/useBookmarks';
 import { useDailyNote } from './hooks/useDailyNote';
+import { useSendToAgent } from './hooks/useSendToAgent';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -137,9 +138,8 @@ export default function App() {
   const [editorStats, setEditorStats] = useState({ words: 0, chars: 0 });
   const [editorHistory, setEditorHistory] = useState({ canUndo: false, canRedo: false });
   const [saveState, setSaveState] = useState(SAVE_STATES.SAVED);
-  // Pending "Send to Agent" payload waiting on the Replace/Append decision.
-  // Non-null only while the collision dialog is open.
-  const [sendToAgentPending, setSendToAgentPending] = useState(null);
+  // Send-to-Agent state (sendToAgentPending, chatSidebarRef, injection) lives in
+  // useSendToAgent, called below once its chat-sidebar deps exist.
   // Sync engine status pushed from main via `sync:status` events.
   // status: 'disabled' | 'idle' | 'syncing' | 'paused' | 'error'.
   const [syncStatus, setSyncStatus] = useState({ status: 'disabled', detail: '', lastSyncAt: null });
@@ -245,16 +245,6 @@ export default function App() {
   // ---- file tree ref (imperative API: editNode(id)) ----
   const fileTreeRef = useRef(null);
   // ---- chat sidebar ref (imperative API: setComposerText, getComposerText, focusComposer) ----
-  // Use a callback ref + ready flag so the "Send to Agent" pending injection
-  // effect re-runs when ChatSidebar mounts (sidebar was previously collapsed).
-  const chatSidebarRef = useRef(null);
-  const [chatSidebarReady, setChatSidebarReady] = useState(false);
-  const setChatSidebarRef = useCallback((handle) => {
-    chatSidebarRef.current = handle;
-    setChatSidebarReady(!!handle);
-  }, []);
-  // { text, append } waiting for the sidebar's imperative ref to attach.
-  const [pendingComposerInjection, setPendingComposerInjection] = useState(null);
 
   // ---- save lifecycle (stays in App, crosses concerns) ----
   // dirtyTabIdRef holds the tab id that needs flushing. For drafts (no path
@@ -1351,61 +1341,13 @@ export default function App() {
   // workspace-relative; selected text is fenced with ~~~ to avoid colliding
   // with code blocks inside it. Trailing newline puts the caret on a blank
   // line so the user can start typing their request.
-  const buildSendToAgentSnippet = useCallback((payload) => {
-    if (!workspacePath || !payload?.relPath) return '';
-    const { relPath } = payload;
-    if (payload.hasSelection) {
-      return (
-        `I've copied the selected text below from ${relPath} at line ${payload.fromLine}, column ${payload.fromCol} to line ${payload.toLine}, column ${payload.toCol}:\n\n` +
-        `~~~\n${payload.selection}\n~~~\n\n`
-      );
-    }
-    return `My cursor is at line ${payload.line}, column ${payload.col} in ${relPath}.\n\n`;
-  }, [workspacePath]);
-
-  const applySendToAgent = useCallback((snippet, { append }) => {
-    if (!chatSidebarOpenRef.current) {
-      chatSidebarOpenRef.current = true;
-      setChatSidebarOpen(true);
-      persistChatSidebar();
-    }
-    // Either fires immediately (sidebar already open + ref attached) or once
-    // the mount completes and the callback ref flips chatSidebarReady to true.
-    setPendingComposerInjection({ text: snippet, append });
-  }, [persistChatSidebar]);
-
-  // Drain a pending composer injection once the sidebar's ref is attached.
-  useEffect(() => {
-    if (!chatSidebarReady || !pendingComposerInjection) return;
-    const { text, append } = pendingComposerInjection;
-    chatSidebarRef.current?.setComposerText(text, { append });
-    requestAnimationFrame(() => chatSidebarRef.current?.focusComposer());
-    setPendingComposerInjection(null);
-  }, [chatSidebarReady, pendingComposerInjection]);
-
-  const onSendToAgent = useCallback((info) => {
-    if (!workspacePath || !activeFile) return;
-    // Prefix the workspace-relative path with `[cwd]/` so the agent reads it
-    // as "relative to your cwd" (which pi sets to the active workspace). Root
-    // files still get the prefix so the snippet shape is uniform.
-    let rel = activeFile;
-    if (activeFile.startsWith(workspacePath)) {
-      rel = activeFile.slice(workspacePath.length).replace(/^\/+/, '');
-    }
-    const relPath = `[cwd]/${rel}`;
-    const snippet = buildSendToAgentSnippet({ ...info, relPath });
-    if (!snippet) return;
-    // Sidebar closed → composer guaranteed empty (component is unmounted), no
-    // need to prompt. Sidebar open → ask before clobbering existing text.
-    if (chatSidebarOpenRef.current) {
-      const existing = chatSidebarRef.current?.getComposerText?.() ?? '';
-      if (existing.trim()) {
-        setSendToAgentPending(snippet);
-        return;
-      }
-    }
-    applySendToAgent(snippet, { append: false });
-  }, [workspacePath, activeFile, buildSendToAgentSnippet, applySendToAgent]);
+  const {
+    onSendToAgent,
+    setChatSidebarRef,
+    sendToAgentPending,
+    setSendToAgentPending,
+    applySendToAgent,
+  } = useSendToAgent({ workspacePath, activeFile, chatSidebarOpenRef, setChatSidebarOpen, persistChatSidebar });
 
   const onChatSidebarResizeStart = useCallback((e) => {
     e.preventDefault();
