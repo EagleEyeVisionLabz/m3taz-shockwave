@@ -1247,12 +1247,6 @@ async function flushWatcher() {
   }
 }
 
-// TEMP diagnostic log — remove after the GitHub-side rename bug is pinned down.
-function dlog(label, obj) {
-  const t = new Date().toISOString().slice(11, 23); // HH:MM:SS.mmm
-  console.log(`[sync-rename ${t}] ${label}`, obj);
-}
-
 // Wire chokidar -> correlator -> pendingByPath. The correlator emits one of
 // 'add' | 'unlink' | 'rename'. The first two go through pendingByPath so they
 // pick up the per-path coalescing behavior; 'rename' goes through renameQueue
@@ -1260,7 +1254,6 @@ function dlog(label, obj) {
 function setupCorrelator() {
   correlator = createRenameCorrelator({
     emit: (e) => {
-      dlog('correlator emit', e);
       if (e.type === 'rename') {
         renameQueue.push(e);
         scheduleFlush();
@@ -1286,7 +1279,6 @@ async function onChokidarAdd(p) {
     return;
   }
   const [ino, hash] = await Promise.all([statInoOf(p), hashFileOf(p)]);
-  dlog('chokidar add', { p, ino, hash: hash?.slice(0, 8) });
   correlator.onPathAppeared(p, ino, hash);
 }
 
@@ -1299,7 +1291,6 @@ async function onChokidarChange(p) {
   // Atomic saves (vim/VS Code) arrive here, with a new inode. Update identity
   // so a future unlink for this path has the latest ino+hash to correlate with.
   const [ino, hash] = await Promise.all([statInoOf(p), hashFileOf(p)]);
-  dlog('chokidar change', { p, ino, hash: hash?.slice(0, 8) });
   correlator.onPathSeen(p, ino, hash);
   pendingByPath.set(p, pendingByPath.get(p) === 'add' ? 'add' : 'change');
   scheduleFlush();
@@ -1311,7 +1302,6 @@ function onChokidarUnlink(p) {
     scheduleFlush();
     return;
   }
-  dlog('chokidar unlink', { p });
   correlator.onPathGone(p);
 }
 
