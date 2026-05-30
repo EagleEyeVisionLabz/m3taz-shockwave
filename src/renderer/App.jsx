@@ -18,7 +18,7 @@ import ConfirmDialog from './ConfirmDialog.jsx';
 import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
 import { formatDailyNote, resolveDailyNotePath } from './dailyNote.js';
-import { basenameOf, dirOf, toRelPath, toAbsPath } from './pathUtils.js';
+import { basenameOf, dirOf } from './pathUtils.js';
 import { diffWordsWithSpace } from 'diff';
 import { rangesAddedFromDiff } from './diffFlash.js';
 import { prettyName } from './linkIndex.js';
@@ -28,7 +28,8 @@ import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
-import { useSyncRef } from './hooks/useSyncRef.js';
+import { useSyncRef } from './hooks/useSyncRef';
+import { useBookmarks, filterTreeToBookmarks } from './hooks/useBookmarks';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -37,22 +38,6 @@ function genWorkspaceId() {
 }
 
 
-// Prune the tree to only the bookmarked files and the folders that contain
-// them. Folders with no bookmarked descendants are removed.
-function filterTreeToBookmarks(nodes, bookmarkedSet) {
-  const out = [];
-  for (const n of nodes) {
-    if (n.children) {
-      const filteredChildren = filterTreeToBookmarks(n.children, bookmarkedSet);
-      if (filteredChildren.length > 0) {
-        out.push({ ...n, children: filteredChildren });
-      }
-    } else if (bookmarkedSet.has(n.id)) {
-      out.push(n);
-    }
-  }
-  return out;
-}
 
 // Sort the tree recursively. Folders are always pinned to the top in A→Z order;
 // only files within each folder are re-ordered per `order`. Missing timestamps
@@ -118,21 +103,13 @@ export default function App() {
   const [urlPromptOpts, setUrlPromptOpts] = useState(null);
   const [journalPickerAnchor, setJournalPickerAnchor] = useState(null);
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
-  // Bookmarks: a Set of absolute file paths in the current workspace. The
-  // on-disk file (`<workspace>/.shockwave/bookmarks.json`) stores workspace-
-  // relative paths; we convert on read/write.
-  const [bookmarks, setBookmarks] = useState(() => new Set());
-  const bookmarksRef = useSyncRef(bookmarks);
-  const [bookmarkFilterActive, setBookmarkFilterActive] = useState(false);
+  // Bookmarks live in useBookmarks (called below, after workspacePath + showError
+  // exist). sortedTree is defined there too, since it consumes the bookmark set.
   const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
   const [hideLineNumbers, setHideLineNumbers] = useState(false);
   const [dailyNote, setDailyNote] = useState({ format: 'YYYY-MM-DD', folder: '' });
   const dailyNoteRef = useSyncRef(dailyNote);
   const [treeSortOrder, setTreeSortOrder] = useState(TREE_SORT_ORDERS.NAME_ASC);
-  const sortedTree = useMemo(() => {
-    const base = bookmarkFilterActive ? filterTreeToBookmarks(tree, bookmarks) : tree;
-    return sortTreeNodes(base, treeSortOrder);
-  }, [tree, treeSortOrder, bookmarkFilterActive, bookmarks]);
   const [codingAgentSettings, setCodingAgentSettings] = useState({
     provider: DEFAULT_PROVIDER_SLUG,
     model: 'claude-sonnet-4-5',
@@ -244,6 +221,25 @@ export default function App() {
       setErrorMessage(null);
     }, 4000);
   }, []);
+
+  const {
+    bookmarks,
+    bookmarksRef,
+    bookmarkFilterActive,
+    setBookmarkFilterActive,
+    resetBookmarks,
+    seedBookmarks,
+    toggleBookmark,
+    setBookmarksForPaths,
+    renameBookmarkPath,
+    removeBookmarkPath,
+    persistBookmarks,
+  } = useBookmarks({ workspacePath, showError });
+
+  const sortedTree = useMemo(() => {
+    const base = bookmarkFilterActive ? filterTreeToBookmarks(tree, bookmarks) : tree;
+    return sortTreeNodes(base, treeSortOrder);
+  }, [tree, treeSortOrder, bookmarkFilterActive, bookmarks]);
 
   // ---- editor ref ----
   const editorRef = useRef(null);
@@ -526,8 +522,7 @@ export default function App() {
     setSelectedFolderPath(null);
     setGraphMode(false);
     setSaveState(SAVE_STATES.SAVED);
-    setBookmarks(new Set());
-    setBookmarkFilterActive(false);
+    resetBookmarks();
     const [treeData, files, bookmarkRelPaths] = await Promise.all([
       window.api.readTree(workspace.path),
       window.api.readAllMarkdown(workspace.path),
@@ -535,23 +530,8 @@ export default function App() {
     ]);
     setTree(treeData);
     linkIndex.rebuild(files);
-    // Convert stored rel paths to abs paths and prune stale entries (files
-    // that no longer exist on disk). A subsequent write trims the on-disk
-    // file too — we don't keep dangling refs around.
-    const absSet = new Set();
-    const stillExists = new Set(files.map((f) => f.path));
-    let needsRewrite = false;
-    for (const rel of bookmarkRelPaths) {
-      const abs = toAbsPath(rel, workspace.path);
-      if (abs && stillExists.has(abs)) absSet.add(abs);
-      else needsRewrite = true;
-    }
-    setBookmarks(absSet);
-    bookmarksRef.current = absSet;
-    if (needsRewrite) {
-      const cleaned = Array.from(absSet).map((p) => toRelPath(p, workspace.path)).filter(Boolean);
-      window.api.bookmarks.write(workspace.path, cleaned).catch(() => {});
-    }
+    // Seed the bookmark set from disk, pruning entries whose files are gone.
+    seedBookmarks(workspace.path, bookmarkRelPaths, new Set(files.map((f) => f.path)));
     await window.api.watchStart(workspace.path);
     // Kick the sync engine. It self-checks whether the workspace has an
     // origin and what the PAT is, so we don't gate on those here. Status
@@ -631,75 +611,6 @@ export default function App() {
     await persistSettings({ workspaces, activeWorkspaceId, themeMode, treeSortOrder: next });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
-  // Bookmark toggle. Writes the new set to disk (workspace-relative paths).
-  const toggleBookmark = useCallback(async (absPath) => {
-    if (!workspacePath || !absPath) return;
-    const next = new Set(bookmarksRef.current);
-    if (next.has(absPath)) next.delete(absPath);
-    else next.add(absPath);
-    setBookmarks(next);
-    bookmarksRef.current = next;
-    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
-    try {
-      await window.api.bookmarks.write(workspacePath, rels);
-    } catch (err) {
-      showError(`Failed to save bookmarks: ${err.message ?? err}`);
-    }
-  }, [workspacePath, showError]);
-
-  // Force every path in `paths` to bookmarked === `desired`. One write to disk
-  // for the whole batch (a loop of toggleBookmark would write N times).
-  const setBookmarksForPaths = useCallback(async (paths, desired) => {
-    if (!workspacePath || !paths || paths.length === 0) return;
-    const next = new Set(bookmarksRef.current);
-    for (const p of paths) {
-      if (desired) next.add(p);
-      else next.delete(p);
-    }
-    setBookmarks(next);
-    bookmarksRef.current = next;
-    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
-    try {
-      await window.api.bookmarks.write(workspacePath, rels);
-    } catch (err) {
-      showError(`Failed to save bookmarks: ${err.message ?? err}`);
-    }
-  }, [workspacePath, showError]);
-
-  // Rewrite a single path inside the bookmark set (used by rename flows).
-  // No write here — caller batches and persists once.
-  const renameBookmarkPath = useCallback((oldPath, newPath) => {
-    const cur = bookmarksRef.current;
-    if (!cur.has(oldPath)) return false;
-    const next = new Set(cur);
-    next.delete(oldPath);
-    next.add(newPath);
-    setBookmarks(next);
-    bookmarksRef.current = next;
-    return true;
-  }, []);
-
-  // Drop a path from the bookmark set (used when a file is deleted).
-  const removeBookmarkPath = useCallback((absPath) => {
-    const cur = bookmarksRef.current;
-    if (!cur.has(absPath)) return false;
-    const next = new Set(cur);
-    next.delete(absPath);
-    setBookmarks(next);
-    bookmarksRef.current = next;
-    return true;
-  }, []);
-
-  // Persist current bookmarks to disk. Used after batched rename/delete edits.
-  const persistBookmarks = useCallback(async () => {
-    if (!workspacePath) return;
-    const rels = Array.from(bookmarksRef.current).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
-    try {
-      await window.api.bookmarks.write(workspacePath, rels);
-    } catch (err) {
-      console.warn('[bookmarks] persist failed:', err);
-    }
-  }, [workspacePath]);
 
   // Bulk-delete confirmation state. Set by the action wrapper when DELETE
   // arrives with >1 path; the ConfirmDialog renders below.
