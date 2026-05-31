@@ -70,7 +70,7 @@ Pipeline invariants:
 2. **Coalescing key is the path.** Multiple events for the same path within the 150ms window collapse to the latest type, with one special case: `unlink → add` for the same path collapses to `change` (atomic save pattern from vim/VS Code).
 3. **The rename correlator buffers unlinks for `RENAME_GRACE_MS` (800ms).** If a paired add arrives in that window with matching inode or content hash, it's emitted as `rename` instead of separate unlink+add. After the grace period, buffered unlinks become real unlinks.
 4. **Renames go through `renameQueue`, not `pendingByPath`.** They're already paired events and shouldn't be merged with per-path bursts.
-5. **Self-echo guard is mtime-based.** The renderer's in-app writes use `Date.now()` for the in-memory mtime; the watcher's echo carries the file's real `stat.mtimeMs`, which is ≤ the renderer's stored mtime, so the renderer skips it. (See "Real mtimes" invariant in the root.)
+5. **Self-echo guard is mtime-based.** `fs:writeFile` and `fs:createFile` return the file's `stat.mtimeMs` (sub-ms float) post-write. The renderer stores that exact value via `linkIndex.updateFile(path, text, mtime)`. The watcher's later flush re-stats and ships the same `stat.mtimeMs`. `evt.mtime > stored` is false → skip. Never substitute `Date.now()` for the renderer-side mtime — integer ms compared to a sub-ms float makes every save look fresh and the editor reloads mid-typing. See "Real mtimes everywhere" in the root invariants.
 6. **Seeding runs synchronously on `watchStart`.** Every `.md` under the root is stat'd + sha1'd before chokidar starts firing events. Without this, an unlink fired immediately after startup couldn't be correlated (we'd have no prior identity to match against).
 
 ### Rename correlator (`renameCorrelator.js`)
@@ -165,6 +165,8 @@ PAT is stored encrypted in `settings.sync.pat` (`enc:v1:` via `safeStorage`). Fo
 ### Flush bridge
 
 `requestFlush()` posts a token to the renderer and resolves either when the renderer acks via `sync:flushDone(token)` or when the 1 s timeout fires. Pending flushes are tracked in a `Map` keyed by token. The renderer subscribes once on mount (not per workspace) and reads `writeNow` via a ref — same discipline as the `fs:changed` listener.
+
+The flush runs at the head of every tick, so on a fast-typing user the engine's `git add` + `git commit` will see and stage the just-flushed buffer — but `writeNow` records the file's real `stat.mtimeMs` in the link index as the canonical "last self-write." When chokidar fires its echo for the same write ~350ms later, the watcher's `evt.mtime` equals the stored value and the self-echo guard skips it. Without that exact-mtime match the watcher would treat the renderer's own save as an external change and reload the editor mid-typing. See "Real mtimes everywhere" in the root `CLAUDE.md` — this is the chain that broke in v1.0.1 when a wrapper dropped the mtime arg.
 
 ### Platform support
 
