@@ -1,7 +1,7 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { Tree } from 'react-arborist';
 import { FILE_ACTIONS } from './constants.js';
-import { beginSidebarImageDrag, endSidebarImageDrag } from './imagePaste.js';
+import { SIDEBAR_IMAGE_MIME } from './imagePaste.js';
 
 const FileTree = forwardRef(function FileTree(
   { data, onSelect, onRename, onFileAction, onFolderAction, onMoveItems, disableDrop, getIsBookmarked, bookmarkedPaths },
@@ -48,6 +48,11 @@ const FileTree = forwardRef(function FileTree(
           ref={treeRef}
           data={data}
           openByDefault={false}
+          // Confine react-arborist's react-dnd backend to the tree element so
+          // it stops owning window-wide drag events (the editor/chat handle
+          // their own native drops). wrapRef is mounted before size>0 gates the
+          // Tree in, so it's non-null here.
+          dndRootElement={wrapRef.current}
           width={size.width}
           height={size.height}
           indent={16}
@@ -85,7 +90,8 @@ function Node({ node, tree, style, dragHandle, onFileAction, onFolderAction, get
 
   const handleDragStart = (e) => {
     if (!isImage) return;
-    beginSidebarImageDrag(node.id);
+    // Native dataTransfer payload, read back by the editor/chat drop handler.
+    e.dataTransfer.setData(SIDEBAR_IMAGE_MIME, node.id);
     e.dataTransfer.effectAllowed = 'copy';
 
     // Custom drag image — a small chip with the filename. Browser snapshots
@@ -98,14 +104,10 @@ function Node({ node, tree, style, dragHandle, onFileAction, onFolderAction, get
     e.dataTransfer.setDragImage(ghost, 8, 8);
     requestAnimationFrame(() => ghost.remove());
 
-    // Block react-dnd's window-level dragstart handler from running. It
-    // would otherwise override our drag image with getEmptyImage(), which
-    // on macOS Electron falls back to dragging the source row — the
-    // "stuck at the sidebar boundary" effect.
+    // Stop react-arborist's react-dnd drag source (for image rows we want a
+    // drag-to-embed, not a tree reorder) so it doesn't override our drag image
+    // with getEmptyImage().
     e.stopPropagation();
-  };
-  const handleDragEnd = () => {
-    if (isImage) endSidebarImageDrag();
   };
 
   const handleContextMenu = async (e) => {
@@ -182,7 +184,6 @@ function Node({ node, tree, style, dragHandle, onFileAction, onFolderAction, get
       onDoubleClick={() => !isFolder && node.edit()}
       onContextMenu={handleContextMenu}
       onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
     >
       <span className="tree-caret">
         {isFolder ? (node.isOpen ? '▾' : '▸') : ''}

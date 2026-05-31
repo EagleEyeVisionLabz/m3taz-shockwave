@@ -107,22 +107,15 @@ function isFileDrag(e) {
   return [...types].includes('Files');
 }
 
-// Module-level handle for sidebar→editor image drags. We can't rely on
-// dataTransfer here: react-arborist drives the source via react-dnd, which
-// registers a window-level dragover handler that forces dropEffect='none'
-// for any drag landing outside its own drop targets (HTML5BackendImpl.js
-// `handleTopDragOver`). That cancels the drop visually and makes the data
-// unreliable. So we stash the source path here on tree dragstart and read
-// it on editor drop.
-let pendingSidebarImagePath = null;
-export function beginSidebarImageDrag(absPath) {
-  pendingSidebarImagePath = absPath;
-}
-export function endSidebarImageDrag() {
-  pendingSidebarImagePath = null;
-}
-function isSidebarImageDrag() {
-  return pendingSidebarImagePath !== null;
+// Custom dataTransfer MIME for sidebar→editor (and →chat) image drags. The tree
+// row sets the workspace-absolute path under this type on dragstart; the editor
+// drop reads it back. react-arborist's react-dnd backend is scoped to the tree
+// element (Tree's `dndRootElement`), so it no longer hijacks drags that land
+// outside the tree — the editor receives the native drop cleanly.
+export const SIDEBAR_IMAGE_MIME = 'application/x-shockwave-image-path';
+function isSidebarImageDrag(e) {
+  const types = e.dataTransfer?.types;
+  return !!types && [...types].includes(SIDEBAR_IMAGE_MIME);
 }
 
 // Posix relative path from `fromDir` to absolute `toPath`. Both inputs are
@@ -167,13 +160,11 @@ async function insertSidebarImage(view, srcAbsPath, { getActiveFilePath, flushDr
 // Paste is handled via CM6's domEventHandlers (no precedence issue —
 // nothing else preventDefaults the clipboard paste in capture phase).
 //
-// Drop is NOT — it's attached directly to view.contentDOM via a ViewPlugin.
-// CM6's dispatch (`runHandlers`) short-circuits on `event.defaultPrevented`,
-// and react-dnd-html5-backend (used by react-arborist for the sidebar tree)
-// registers a window-level capture-phase drop listener that preventDefaults
-// native file drags. That fires before CM6's bubble-phase listener, so any
-// `drop` registered via domEventHandlers never runs. Marijn (CM6 author)
-// recommends a direct addEventListener for this exact case.
+// Drop is attached directly to view.contentDOM via a ViewPlugin so it can
+// `stopImmediatePropagation` before CM6's own built-in drop handler runs —
+// CM6 would otherwise readAsText the dropped image bytes and insert garbage.
+// (react-dnd no longer factors in here: it's scoped to the tree element, so it
+// doesn't touch drops that land in the editor.)
 const pasteHandler = ({ getActiveFilePath, flushDraftToDisk, onError }) =>
   EditorView.domEventHandlers({
     paste(e, view) {
@@ -188,21 +179,16 @@ const pasteHandler = ({ getActiveFilePath, flushDraftToDisk, onError }) =>
 const dropPlugin = ({ getActiveFilePath, flushDraftToDisk, onError }) =>
   ViewPlugin.define((view) => {
     const onDragOver = (e) => {
-      const sidebar = isSidebarImageDrag();
-      if (!isFileDrag(e) && !sidebar) return;
+      if (!isFileDrag(e) && !isSidebarImageDrag(e)) return;
       e.preventDefault();
-      // For sidebar drags, stop the event from reaching react-dnd's
-      // window-level handler that would otherwise force dropEffect='none'.
-      if (sidebar) e.stopPropagation();
       if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
     };
     const onDrop = (e) => {
-      if (isSidebarImageDrag()) {
-        const srcPath = pendingSidebarImagePath;
-        pendingSidebarImagePath = null;
+      if (isSidebarImageDrag(e)) {
+        const srcPath = e.dataTransfer.getData(SIDEBAR_IMAGE_MIME);
         e.preventDefault();
         e.stopImmediatePropagation();
-        insertSidebarImage(view, srcPath, { getActiveFilePath, flushDraftToDisk, onError });
+        if (srcPath) insertSidebarImage(view, srcPath, { getActiveFilePath, flushDraftToDisk, onError });
         return;
       }
       const images = pickImageFiles(e.dataTransfer?.files);
