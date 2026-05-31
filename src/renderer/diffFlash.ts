@@ -12,13 +12,15 @@
 import { StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView } from '@codemirror/view';
 
-const setRanges = StateEffect.define();
-const clearRanges = StateEffect.define();
+interface FlashRange { from: number; to: number; }
+
+const setRanges = StateEffect.define<FlashRange[]>();
+const clearRanges = StateEffect.define<null>();
 
 // Must match the .cm-ai-stream-done animation duration in styles.css.
 const DONE_ANIM_MS = 1000;
 
-const flashField = StateField.define({
+const flashField = StateField.define<FlashRange[]>({
   create: () => [],
   update(value, tr) {
     let next = value;
@@ -53,7 +55,7 @@ const flashDecorations = EditorView.decorations.compute([flashField], (state) =>
 
 export const diffFlashExtension = [flashField, flashDecorations];
 
-export function flashRanges(view, ranges) {
+export function flashRanges(view: EditorView, ranges: FlashRange[]) {
   if (!view || !ranges || ranges.length === 0) return;
   view.dispatch({ effects: setRanges.of(ranges) });
   setTimeout(() => {
@@ -65,8 +67,8 @@ export function flashRanges(view, ranges) {
 // Walk a `diff.diffLines(old, new)` change array and return the [{from,to}]
 // offsets of added text in the new doc. `old`/`new` are the same strings
 // passed to diffLines (we recompute via length tracking).
-export function rangesAddedFromDiff(changes) {
-  const ranges = [];
+export function rangesAddedFromDiff(changes: Array<{ value: string; added?: boolean; removed?: boolean }>): FlashRange[] {
+  const ranges: FlashRange[] = [];
   let pos = 0;
   for (const part of changes) {
     const len = part.value.length;

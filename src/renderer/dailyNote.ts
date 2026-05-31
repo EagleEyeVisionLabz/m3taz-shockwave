@@ -15,7 +15,7 @@ export const DAILY_NOTE_FORMAT_HELP_URL = 'https://day.js.org/docs/en/display/fo
 
 // Format a JS Date using dayjs (moment-compatible tokens). Catches invalid
 // formats — returns '' so the UI can show "Invalid format" rather than crash.
-export function formatDailyNote(format, date = new Date()) {
+export function formatDailyNote(format: string, date: Date = new Date()): string {
   try {
     const out = dayjs(date).format(format || DEFAULT_DAILY_NOTE_FORMAT);
     return out;
@@ -35,7 +35,7 @@ export function formatDailyNote(format, date = new Date()) {
 //   dir      — absolute folder the file should live in
 //   name     — basename (no .md)
 //   absPath  — `${dir}/${name}.md`
-export function resolveDailyNotePath(workspacePath, folder, formatted) {
+export function resolveDailyNotePath(workspacePath: string, folder: string, formatted: string): { dir: string; name: string; absPath: string } {
   const cleanFolder = (folder ?? '').replace(/^\/+|\/+$/g, '');
   const segments = formatted.split('/').filter(Boolean);
   const name = segments.pop() || formatted;

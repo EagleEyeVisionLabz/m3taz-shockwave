@@ -14,6 +14,11 @@
     "checkJs": false,
     "noEmit": true,
     "strict": true,
+    // Migration posture: keep strict's real bug-catching (null-safety, type
+    // mismatches) but don't force an annotation on every internal param while
+    // landing the .js→.ts conversion. Exported/contract signatures are still
+    // typed by hand. Ratchet this to true later for full coverage.
+    "noImplicitAny": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
