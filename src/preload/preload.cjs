@@ -169,6 +169,9 @@ contextBridge.exposeInMainWorld('api', {
    * @returns {Promise<string|null>} The chosen FILE_ACTIONS value, or null if dismissed.
    */
   showFileContextMenu: (opts) => ipcRenderer.invoke('context:fileMenu', opts),
+  /** Right-click menu for the sync-conflict cloud icon (whole-tree).
+   *  @returns {Promise<'keep'|'reset'|null>} */
+  showConflictCloudMenu: () => ipcRenderer.invoke('context:conflictCloudMenu'),
   /** @returns {Promise<string|null>} The chosen FOLDER_ACTIONS value, or null. */
   showFolderContextMenu: () => ipcRenderer.invoke('context:folderMenu'),
   /**
@@ -360,7 +363,14 @@ contextBridge.exposeInMainWorld('api', {
      *  conflict list; empty means the merge will conclude + push on the next tick.
      *  @param {string} workspacePath @param {string} relPath @returns {Promise<string[]>} */
     resolveConflict: (workspacePath, relPath) => ipcRenderer.invoke('sync:resolveConflict', { workspacePath, relPath }),
-    /** Discard ALL local divergence and hard-reset the workspace to origin/<branch>.
+    /** Per file: keep our version. @returns {Promise<string[]>} remaining conflicts. */
+    keepConflict: (workspacePath, relPath) => ipcRenderer.invoke('sync:keepConflict', { workspacePath, relPath }),
+    /** Per file: take the remote version. @returns {Promise<string[]>} remaining conflicts. */
+    resetConflict: (workspacePath, relPath) => ipcRenderer.invoke('sync:resetConflict', { workspacePath, relPath }),
+    /** Whole tree: keep ours on every conflict, then complete the merge. Destructive
+     *  to the remote's conflicting edits — the caller confirms. @param {string} workspacePath */
+    keepAll: (workspacePath) => ipcRenderer.invoke('sync:keepAll', workspacePath),
+    /** Whole tree: discard ALL local divergence, hard-reset to origin/<branch>.
      *  Destructive — the caller confirms first. @param {string} workspacePath @returns {Promise<void>} */
     resetToRemote: (workspacePath) => ipcRenderer.invoke('sync:resetToRemote', workspacePath),
     /** Reply to a `onFlushRequest` with the same token. The engine waits

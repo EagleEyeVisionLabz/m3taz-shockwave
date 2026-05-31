@@ -30,6 +30,9 @@ import {
   getCurrentStatus as engineGetCurrentStatus,
   getConflicts as engineGetConflicts,
   resolveConflict as engineResolveConflict,
+  keepConflict as engineKeepConflict,
+  resetConflict as engineResetConflict,
+  keepAll as engineKeepAll,
   resetToRemote as engineResetToRemote,
 } from './syncEngine.js';
 import {
@@ -649,12 +652,12 @@ function revealLabel() {
 ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   const { isMd = true, isBookmarked = false, selectionCount = 1, conflictMode = false } = opts;
-  // In the conflict-resolution view: Resolve (= git add this file) or the
-  // whole-repo escape hatch, Reset to Remote (discard local, take GitHub).
+  // Conflict view, per file: accept as-edited, keep ours, or take remote.
   if (conflictMode) {
     return popupContextMenu(win, [
       { label: 'Resolved', value: FILE_ACTIONS.RESOLVE },
-      { label: 'Reset', value: FILE_ACTIONS.RESET_TO_REMOTE },
+      { label: 'Keep', value: FILE_ACTIONS.KEEP },
+      { label: 'Reset', value: FILE_ACTIONS.RESET },
     ]);
   }
   const multi = selectionCount > 1;
@@ -682,6 +685,15 @@ ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
     );
   }
   return popupContextMenu(win, template);
+});
+
+// Right-click on the sync-conflict cloud icon: whole-tree resolution.
+ipcMain.handle('context:conflictCloudMenu', async (evt) => {
+  const win = BrowserWindow.fromWebContents(evt.sender);
+  return popupContextMenu(win, [
+    { label: 'Keep entire tree (take ours)', value: 'keep' },
+    { label: 'Reset entire tree (take remote)', value: 'reset' },
+  ]);
 });
 
 ipcMain.handle('context:folderMenu', async (evt) => {
@@ -1060,7 +1072,21 @@ ipcMain.handle('sync:resolveConflict', async (_evt, { workspacePath, relPath }) 
   return engineResolveConflict(workspacePath, relPath);
 });
 
-// Whole-repo escape hatch: discard local divergence, hard-reset to origin.
+// Per file: keep ours / take remote.
+ipcMain.handle('sync:keepConflict', async (_evt, { workspacePath, relPath }) => {
+  if (!workspacePath || !relPath) return [];
+  return engineKeepConflict(workspacePath, relPath);
+});
+ipcMain.handle('sync:resetConflict', async (_evt, { workspacePath, relPath }) => {
+  if (!workspacePath || !relPath) return [];
+  return engineResetConflict(workspacePath, relPath);
+});
+
+// Whole tree: keep ours everywhere (then complete the merge), or hard-reset to origin.
+ipcMain.handle('sync:keepAll', async (_evt, workspacePath) => {
+  if (!workspacePath) return;
+  return engineKeepAll(workspacePath);
+});
 ipcMain.handle('sync:resetToRemote', async (_evt, workspacePath) => {
   if (!workspacePath) return;
   return engineResetToRemote(workspacePath);

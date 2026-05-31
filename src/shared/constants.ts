@@ -9,8 +9,10 @@ export const FILE_ACTIONS = Object.freeze({
   RENAME: 'rename',
   DELETE: 'delete',
   TOGGLE_BOOKMARK: 'toggleBookmark',
+  // Conflict view, per file: accept as-edited / keep ours / take remote.
   RESOLVE: 'resolve',
-  RESET_TO_REMOTE: 'resetToRemote',
+  KEEP: 'keep',
+  RESET: 'reset',
 } as const);
 export type FileAction = (typeof FILE_ACTIONS)[keyof typeof FILE_ACTIONS];
 

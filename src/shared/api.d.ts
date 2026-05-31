@@ -115,6 +115,7 @@ export interface ShockwaveApi {
 
   // Native context menus
   showFileContextMenu(opts: { isMd?: boolean; isBookmarked?: boolean; selectionCount?: number; conflictMode?: boolean }): Promise<FileAction | null>;
+  showConflictCloudMenu(): Promise<'keep' | 'reset' | null>;
   showFolderContextMenu(): Promise<FolderAction | null>;
   showEditorContextMenu(opts: { hasSelection?: boolean; hasFilePath?: boolean; hasLink?: boolean }): Promise<EditorAction | null>;
 
@@ -179,6 +180,9 @@ export interface ShockwaveApi {
     engineStatus(): Promise<SyncStatus>;
     listConflicts(workspacePath: string): Promise<string[]>;
     resolveConflict(workspacePath: string, relPath: string): Promise<string[]>;
+    keepConflict(workspacePath: string, relPath: string): Promise<string[]>;
+    resetConflict(workspacePath: string, relPath: string): Promise<string[]>;
+    keepAll(workspacePath: string): Promise<void>;
     resetToRemote(workspacePath: string): Promise<void>;
     flushDone(token: number): Promise<void>;
     onFlushRequest(cb: (token: number) => void): Unsubscribe;

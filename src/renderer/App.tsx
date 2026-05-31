@@ -621,8 +621,9 @@ export default function App() {
   // Bulk-delete confirmation state. Set by the action wrapper when DELETE
   // arrives with >1 path; the ConfirmDialog renders below.
   const [bulkDeleteCandidates, setBulkDeleteCandidates] = useState<any>(null);
-  // Whole-repo "reset to remote" awaiting the user's confirm.
+  // Whole-tree conflict actions awaiting the user's confirm.
   const [resetToRemotePending, setResetToRemotePending] = useState(false);
+  const [keepAllPending, setKeepAllPending] = useState(false);
 
   // Action wrapper around fileOps.onFileAction. Two responsibilities:
   // 1) Handle TOGGLE_BOOKMARK (kept here so useFileOps stays bookmark-free).
@@ -630,19 +631,21 @@ export default function App() {
   //    right-click on a multi-selection. Single-target actions (DUPLICATE,
   //    REVEAL, RENAME) collapse to the first path; bulk-safe actions
   //    (TOGGLE_BOOKMARK, DELETE, NEW_TAB) fan out.
-  // Mark one conflicted file resolved (git add). Flush it first if it's open so
-  // git stages the user's edits, not stale on-disk content. The engine pushes a
-  // new status (fewer conflicts, or idle) → conflictPaths updates → view
-  // refreshes/exits on its own.
-  const resolveConflictPath = useCallback(async (absPath) => {
+  // Per-file conflict action: 'resolve' (accept as-edited / git add), 'keep'
+  // (our version), 'reset' (remote version). Flush the file first if it's open
+  // so git stages the user's edits, not stale on-disk content. The engine
+  // pushes a new status (fewer conflicts / idle) → the view refreshes/exits.
+  const conflictFileAction = useCallback(async (absPath, kind) => {
     if (!workspacePath) return;
     if (absPath === activeFile) { try { await writeNow(); } catch { /* surfaced below */ } }
     const rel = toRelPath(absPath, workspacePath);
     if (!rel) return;
     try {
-      await window.api.sync.resolveConflict(workspacePath, rel);
+      if (kind === 'keep') await window.api.sync.keepConflict(workspacePath, rel);
+      else if (kind === 'reset') await window.api.sync.resetConflict(workspacePath, rel);
+      else await window.api.sync.resolveConflict(workspacePath, rel);
     } catch (err: any) {
-      showError(`Failed to resolve: ${err.message ?? err}`);
+      showError(`Conflict action failed: ${err.message ?? err}`);
     }
   }, [workspacePath, activeFile, writeNow, showError]);
 
@@ -650,16 +653,9 @@ export default function App() {
     const paths = Array.isArray(filePathOrPaths) ? filePathOrPaths : [filePathOrPaths];
     if (paths.length === 0) return;
 
-    if (action === FILE_ACTIONS.RESOLVE) {
-      void resolveConflictPath(paths[0]);
-      return;
-    }
-
-    if (action === FILE_ACTIONS.RESET_TO_REMOTE) {
-      // Whole-repo, destructive → confirm first (handled by the dialog below).
-      setResetToRemotePending(true);
-      return;
-    }
+    if (action === FILE_ACTIONS.RESOLVE) { void conflictFileAction(paths[0], 'resolve'); return; }
+    if (action === FILE_ACTIONS.KEEP) { void conflictFileAction(paths[0], 'keep'); return; }
+    if (action === FILE_ACTIONS.RESET) { void conflictFileAction(paths[0], 'reset'); return; }
 
     if (action === FILE_ACTIONS.TOGGLE_BOOKMARK) {
       if (paths.length === 1) {
@@ -687,7 +683,7 @@ export default function App() {
 
     // Single-target actions: act on the first path.
     fileOps.onFileAction(action, paths[0]);
-  }, [fileOps, toggleBookmark, setBookmarksForPaths, resolveConflictPath]);
+  }, [fileOps, toggleBookmark, setBookmarksForPaths, conflictFileAction]);
 
   const confirmResetToRemote = useCallback(async () => {
     setResetToRemotePending(false);
@@ -698,6 +694,23 @@ export default function App() {
       showError(`Reset to remote failed: ${err.message ?? err}`);
     }
   }, [workspacePath, showError]);
+
+  const confirmKeepAll = useCallback(async () => {
+    setKeepAllPending(false);
+    if (!workspacePath) return;
+    try {
+      await window.api.sync.keepAll(workspacePath);
+    } catch (err: any) {
+      showError(`Keep entire tree failed: ${err.message ?? err}`);
+    }
+  }, [workspacePath, showError]);
+
+  // Cloud-icon right-click → whole-tree resolution menu.
+  const onConflictCloudMenu = useCallback(async () => {
+    const choice = await window.api.showConflictCloudMenu();
+    if (choice === 'reset') setResetToRemotePending(true);
+    else if (choice === 'keep') setKeepAllPending(true);
+  }, []);
 
   const cancelBulkDelete = useCallback(() => setBulkDeleteCandidates(null), []);
   const confirmBulkDelete = useCallback(async () => {
@@ -1324,6 +1337,7 @@ export default function App() {
           conflictCount={conflictPaths.length}
           conflictFilterActive={conflictFilterActive}
           onToggleConflictFilter={() => { setBookmarkFilterActive(false); setConflictFilterActive((v) => !v); }}
+          onConflictCloudMenu={onConflictCloudMenu}
           disabled={!workspacePath}
         />
         <div className="tree-wrap">
@@ -1540,12 +1554,22 @@ export default function App() {
 
       <ConfirmDialog
         open={resetToRemotePending}
-        title="Reset to remote"
+        title="Reset entire tree"
         message="Discard all local changes in this workspace and take the GitHub version? This throws away your un-synced edits and can't be undone."
         confirmLabel="Reset to remote"
         destructive
         onConfirm={confirmResetToRemote}
         onClose={() => setResetToRemotePending(false)}
+      />
+
+      <ConfirmDialog
+        open={keepAllPending}
+        title="Keep entire tree"
+        message="Resolve every conflict in favor of your version? On the next sync this overwrites the other machine's conflicting edits on GitHub."
+        confirmLabel="Keep ours"
+        destructive
+        onConfirm={confirmKeepAll}
+        onClose={() => setKeepAllPending(false)}
       />
 
       <Dialog

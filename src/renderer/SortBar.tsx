@@ -34,6 +34,7 @@ export default function SortBar({
   conflictCount,
   conflictFilterActive,
   onToggleConflictFilter,
+  onConflictCloudMenu,
   disabled,
 }) {
   const rootRef = useRef<any>(null);
@@ -179,9 +180,10 @@ export default function SortBar({
           type="button"
           className={`sort-bar-icon-btn sort-bar-conflict-btn ${conflictFilterActive ? 'is-active' : ''}`}
           onClick={onToggleConflictFilter}
+          onContextMenu={(e) => { e.preventDefault(); onConflictCloudMenu?.(); }}
           title={conflictFilterActive
-            ? 'Show all files'
-            : `${conflictCount} sync conflict${conflictCount === 1 ? '' : 's'} — click to resolve`}
+            ? 'Show all files (right-click for whole-tree actions)'
+            : `${conflictCount} sync conflict${conflictCount === 1 ? '' : 's'} — click to resolve, right-click for whole-tree`}
           aria-label="Toggle conflict view"
           aria-pressed={conflictFilterActive}
         >

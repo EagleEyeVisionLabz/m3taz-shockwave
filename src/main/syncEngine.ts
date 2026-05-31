@@ -269,18 +269,16 @@ export async function getConflicts(workspacePath) {
   return listConflicts(workspacePath);
 }
 
-/**
- * Mark one conflicted file resolved: `git add <relPath>`. Serialized with the
- * tick loop so we never touch the index mid-tick. Returns the remaining
- * conflict list. When it hits empty, kicks a tick immediately so the merge
- * commit + push happen without waiting for the interval.
- */
-export async function resolveConflict(workspacePath, relPath) {
+// Run a sequence of staging commands (checkout/add) under the tick guard, then
+// re-list conflicts. If any remain, emit the paused status; if none remain,
+// kick a tick so the merge commit + push happen immediately. Serialized with
+// the tick loop so we never touch the index mid-tick. Returns the new list.
+async function stageAndReport(workspacePath, ops) {
   if (state.pendingTickPromise) await state.pendingTickPromise.catch(() => {});
   state.ticking = true;
   let remaining;
   try {
-    await gitSpawn(workspacePath, ['add', '--', relPath], { timeoutMs: 30_000 });
+    for (const args of ops) await gitSpawn(workspacePath, args, { timeoutMs: 30_000 });
     remaining = await listConflicts(workspacePath);
     if (remaining.length > 0) {
       emitStatus({ status: STATUS.PAUSED, detail: `${remaining.length} conflict${remaining.length > 1 ? 's' : ''} — resolve to continue`, conflicts: remaining });
@@ -289,10 +287,27 @@ export async function resolveConflict(workspacePath, relPath) {
     state.ticking = false;
   }
   if (remaining.length === 0) {
-    // Conclude the merge (commitDirty's commit) + push, now.
     runTick().catch((err) => emitStatus({ status: STATUS.ERROR, detail: `Tick failed: ${err.message}` }));
   }
   return remaining;
+}
+
+/** Per file. Resolve = accept the file as-edited (`git add`). */
+export function resolveConflict(workspacePath, relPath) {
+  return stageAndReport(workspacePath, [['add', '--', relPath]]);
+}
+/** Per file. Keep = our version (`checkout --ours` + add). */
+export function keepConflict(workspacePath, relPath) {
+  return stageAndReport(workspacePath, [['checkout', '--ours', '--', relPath], ['add', '--', relPath]]);
+}
+/** Per file. Reset = remote version (`checkout --theirs` + add). */
+export function resetConflict(workspacePath, relPath) {
+  return stageAndReport(workspacePath, [['checkout', '--theirs', '--', relPath], ['add', '--', relPath]]);
+}
+/** Whole tree. Keep all = our version of every conflict (`checkout --ours .`),
+ *  then complete the merge (remote's non-conflicting changes still come in). */
+export function keepAll(workspacePath) {
+  return stageAndReport(workspacePath, [['checkout', '--ours', '.'], ['add', '-A']]);
 }
 
 /**
