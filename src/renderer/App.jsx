@@ -18,10 +18,7 @@ import ConfirmDialog from './ConfirmDialog.jsx';
 import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
 import { basenameOf, dirOf } from './pathUtils.js';
-import { diffWordsWithSpace } from 'diff';
-import { rangesAddedFromDiff } from './diffFlash.js';
 import { prettyName } from './linkIndex.js';
-import { rewriteReferences } from './renameOps.js';
 import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, DEFAULT_PROVIDER_SLUG, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
 import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
@@ -31,6 +28,7 @@ import { useSyncRef } from './hooks/useSyncRef';
 import { useBookmarks, filterTreeToBookmarks } from './hooks/useBookmarks';
 import { useDailyNote } from './hooks/useDailyNote';
 import { useSendToAgent } from './hooks/useSendToAgent';
+import { useFsWatcher } from './hooks/useFsWatcher';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -976,122 +974,19 @@ export default function App() {
   // would be cleared by cleanup before it could fire, and the tree would never
   // refresh for external .md adds. See the deep dive on the file-watcher
   // gotcha in CLAUDE.md → Development workflow.
-  const linkIndexRefForWatcher = useSyncRef(linkIndex);
-  const refreshTreeRef = useSyncRef(refreshTree);
-  const renameTabsPathRef = useSyncRef(renameTabsPath);
-  const showErrorRef = useSyncRef(showError);
-  // Watcher reads activeFile via this ref so the subscription doesn't retear
-  // every time the user switches tabs.
-  const activeFileRef = useSyncRef(activeFile);
-  const activeIsDraftRef = useSyncRef(activeIsDraft);
-  // Bookmark sync on external/echoed rename + delete, read via refs so the
-  // watcher subscription stays stable.
-  const renameBookmarkPathRef = useSyncRef(renameBookmarkPath);
-  const removeBookmarkPathRef = useSyncRef(removeBookmarkPath);
-  const persistBookmarksRef = useSyncRef(persistBookmarks);
-
-  useEffect(() => {
-    if (!workspacePath) return undefined;
-    let refreshTimer = null;
-    const scheduleRefresh = () => {
-      if (refreshTimer) return;
-      refreshTimer = setTimeout(() => {
-        refreshTimer = null;
-        refreshTreeRef.current();
-      }, 80);
-    };
-    const unsub = window.api.onFsChanged((evt) => {
-      const li = linkIndexRefForWatcher.current;
-      if (evt.type === 'tree') {
-        scheduleRefresh();
-        return;
-      }
-      if (evt.type === 'unlink') {
-        li.removeFile(evt.path);
-        if (removeBookmarkPathRef.current(evt.path)) persistBookmarksRef.current();
-        scheduleRefresh();
-        return;
-      }
-      if (evt.type === 'rename') {
-        // 1) Re-key the index so subsequent events for newPath are coherent.
-        li.renameFile(evt.oldPath, evt.newPath);
-        // 2) Refresh outgoing links if content changed during the move (rare).
-        const stored = li.getMtime(evt.newPath);
-        if (stored == null || evt.mtime > stored) {
-          li.applyParsedLinks(evt.newPath, evt.outgoingLinks, evt.mtime);
-        }
-        // 3) Update any open tabs pointing at the old path.
-        renameTabsPathRef.current(evt.oldPath, evt.newPath);
-        // 3b) Keep the bookmark set in sync if the renamed file was bookmarked.
-        if (renameBookmarkPathRef.current(evt.oldPath, evt.newPath)) persistBookmarksRef.current();
-        // 4) Rewrite `[[OldName]]` references in other files. Idempotent — if
-        //    the rename was in-app, these were already rewritten and the regex
-        //    matches nothing on the watcher echo.
-        const oldBaseName = evt.oldPath.split('/').pop().replace(/\.md$/i, '');
-        const newBaseName = evt.newPath.split('/').pop().replace(/\.md$/i, '');
-        if (oldBaseName !== newBaseName) {
-          (async () => {
-            try {
-              await rewriteReferences({
-                api: window.api,
-                linkIndex: li.linkIndexRef.current,
-                oldBaseName,
-                newBaseName,
-                selfPath: evt.newPath,
-              });
-              // Re-read self in case self-refs were rewritten on disk.
-              try {
-                const content = await window.api.readFile(evt.newPath);
-                li.updateFile(evt.newPath, content);
-              } catch { /* file may have moved again */ }
-            } catch (err) {
-              showErrorRef.current(err.message ?? String(err));
-            }
-          })();
-        }
-        scheduleRefresh();
-        return;
-      }
-      // 'add' | 'change'
-      const stored = li.getMtime(evt.path);
-      const isFresh = stored == null || evt.mtime > stored;
-      if (isFresh) {
-        li.applyParsedLinks(evt.path, evt.outgoingLinks, evt.mtime);
-      }
-      // If the changed file is the open tab, reload the buffer from disk and
-      // flash the added text green. Skipping the freshness check here means a
-      // self-echo (renderer just wrote) is ignored — the stored mtime gate
-      // above already filtered for that.
-      if (
-        evt.type === 'change' &&
-        isFresh &&
-        evt.path === activeFileRef.current &&
-        !activeIsDraftRef.current
-      ) {
-        (async () => {
-          try {
-            const editor = editorRef.current;
-            if (!editor) return;
-            const oldText = editor.getText();
-            const newText = await window.api.readFile(evt.path);
-            if (oldText === newText) return;
-            const viewState = editor.getViewState();
-            editor.setContent(newText, viewState);
-            const changes = diffWordsWithSpace(oldText, newText);
-            const ranges = rangesAddedFromDiff(changes);
-            if (ranges.length > 0) editor.flashRanges(ranges);
-          } catch {
-            // File may have been deleted or moved before we could read it.
-          }
-        })();
-      }
-      if (evt.type === 'add') scheduleRefresh();
-    });
-    return () => {
-      unsub();
-      if (refreshTimer) clearTimeout(refreshTimer);
-    };
-  }, [workspacePath]);
+  useFsWatcher({
+    workspacePath,
+    linkIndex,
+    refreshTree,
+    renameTabsPath,
+    showError,
+    activeFile,
+    activeIsDraft,
+    editorRef,
+    renameBookmarkPath,
+    removeBookmarkPath,
+    persistBookmarks,
+  });
 
   // ---- boot: load settings + subscribe to system theme ----
   useEffect(() => {

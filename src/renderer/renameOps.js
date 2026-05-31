@@ -16,6 +16,9 @@ function escapeRegex(s) {
 // references too — if Foo.md contains `[[Foo]]` and is being renamed to
 // Bar.md, we want the in-file link to become `[[Bar]]`. Pass it so we know
 // which path is the file being renamed (for index updates after writing).
+/**
+ * @param {{ api: any, linkIndex: any, oldBaseName: string, newBaseName: string, selfPath?: string|null }} opts
+ */
 export async function rewriteReferences({ api, linkIndex, oldBaseName, newBaseName, selfPath = null }) {
   const targetKey = normalizeTarget(oldBaseName);
   const backlinks = linkIndex.getBacklinks(targetKey);
