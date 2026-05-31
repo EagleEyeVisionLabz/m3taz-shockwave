@@ -37,7 +37,7 @@ export async function verifyPat(pat) {
     if (!res.ok) return { ok: false, error: `GitHub returned ${res.status}` };
     const data = await res.json();
     return { ok: true, login: data.login, id: data.id, name: data.name ?? null };
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: `Network error: ${err.message}` };
   }
 }
@@ -52,7 +52,7 @@ export async function verifyPat(pat) {
  */
 export async function listRepos(pat) {
   if (!pat) return { ok: false, error: 'No token provided' };
-  const out = [];
+  const out: any[] = [];
   const perPage = 100;
   const maxPages = 5;
   try {
@@ -75,7 +75,7 @@ export async function listRepos(pat) {
       if (batch.length < perPage) break;
     }
     return { ok: true, repos: out };
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: `Network error: ${err.message}` };
   }
 }
@@ -102,7 +102,7 @@ export async function probeWrite(owner, repo, pat) {
     if (res.status === 404) return { ok: false, error: 'Repo not found or token can\'t see it' };
     if (res.status === 401) return { ok: false, error: 'Invalid or expired token' };
     return { ok: false, error: `GitHub returned ${res.status}` };
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: `Network error: ${err.message}` };
   }
 }
@@ -144,7 +144,7 @@ export async function createRepo(name, pat, { private: isPrivate = true, descrip
     }
     if (res.status === 401) return { ok: false, error: 'Invalid or expired token' };
     return { ok: false, error: `GitHub returned ${res.status}` };
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: `Network error: ${err.message}` };
   }
 }
@@ -182,13 +182,13 @@ export function cloneUrlFor(owner, repo) {
  * is included so the renderer can pick the right install instructions.
  */
 export function checkGit() {
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     let stdout = '';
     let stderr = '';
     let child;
     try {
       child = spawn('git', ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
+    } catch (err: any) {
       resolve({ ok: false, error: err.message, platform: process.platform });
       return;
     }
@@ -219,7 +219,7 @@ export function checkGit() {
 // macOS/Linux: a posix shell script. Windows: a .cmd batch file. ensureAskpass
 // writes the right one for the host platform.
 
-let askpassPathCache = null;
+let askpassPathCache: any = null;
 
 async function askpassDir() {
   return path.join(app.getPath('userData'), 'sync');
@@ -291,14 +291,14 @@ export async function gitSpawn(cwd, args, { pat = null, timeoutMs = 60000 } = {}
     // prompt from a backgrounded child process.
     env.GIT_TERMINAL_PROMPT = '0';
   }
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     let stdout = '';
     let stderr = '';
-    let timer = null;
+    let timer: any = null;
     let child;
     try {
       child = spawn('git', args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
-    } catch (err) {
+    } catch (err: any) {
       resolve({ ok: false, code: -1, stdout: '', stderr: err.message });
       return;
     }
@@ -369,7 +369,7 @@ export async function setupClone({ workspacePath, remoteUrl, pat }) {
   let entries;
   try {
     entries = await fs.readdir(workspacePath);
-  } catch (err) {
+  } catch (err: any) {
     return { ok: false, error: `Workspace folder unreadable: ${err.message}` };
   }
   // Allow .DS_Store and hidden-only state but no real files.
@@ -408,19 +408,19 @@ export async function setupInitAndCreate({ workspacePath, repoName, pat, private
 
   // Set origin. `remote add` fails if origin exists; use `set-url` to be
   // idempotent against partial setups.
-  const setUrl = await gitSpawn(workspacePath, ['remote', 'add', 'origin', cloneUrlFor(...created.full_name.split('/'))], { timeoutMs: 5000 });
+  const setUrl = await gitSpawn(workspacePath, ['remote', 'add', 'origin', cloneUrlFor(...(created.full_name.split('/') as [string, string]))], { timeoutMs: 5000 });
   if (!setUrl.ok && !/exists/.test(setUrl.stderr)) {
     return { ok: false, error: setUrl.stderr.trim() };
   }
   if (!setUrl.ok) {
-    const reset = await gitSpawn(workspacePath, ['remote', 'set-url', 'origin', cloneUrlFor(...created.full_name.split('/'))], { timeoutMs: 5000 });
+    const reset = await gitSpawn(workspacePath, ['remote', 'set-url', 'origin', cloneUrlFor(...(created.full_name.split('/') as [string, string]))], { timeoutMs: 5000 });
     if (!reset.ok) return { ok: false, error: reset.stderr.trim() };
   }
 
   const who = await verifyPat(pat);
   if (who.ok) await setLocalIdentity(workspacePath, who.login, who.id);
 
-  return { ok: true, remoteUrl: cloneUrlFor(...created.full_name.split('/')), full_name: created.full_name, html_url: created.html_url };
+  return { ok: true, remoteUrl: cloneUrlFor(...(created.full_name.split('/') as [string, string])), full_name: created.full_name, html_url: created.html_url };
 }
 
 /**

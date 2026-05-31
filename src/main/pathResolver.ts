@@ -69,7 +69,7 @@ export async function collectMarkdownBasenamesLower(root, excludePaths = new Set
 //     the workspace (so the link index doesn't collapse two files into one key).
 // `excludePaths` lets the caller exempt files that are about to be renamed
 // out of the way (otherwise renaming Foo.md -> Foo.md would collide with itself).
-export async function uniqueInWorkspace({ workspaceRoot, destDir, base, ext, excludePaths = [] }) {
+export async function uniqueInWorkspace({ workspaceRoot, destDir, base, ext, excludePaths = [] }: any) {
   const exclude = new Set(excludePaths);
   // For folders or files outside a workspace, fall back to same-dir uniqueness.
   if (!workspaceRoot || ext !== '.md') {
@@ -102,7 +102,7 @@ export async function uniqueInWorkspace({ workspaceRoot, destDir, base, ext, exc
 // Single helper for all "find me the markdown files under X" callers:
 // collision-check exclusion (move/rename) and correlator seeding.
 export async function walkMarkdownPaths(root, { skipSymlinks = true } = {}) {
-  const out = [];
+  const out: any[] = [];
   async function walk(dir) {
     let entries;
     try { entries = await fs.readdir(dir, { withFileTypes: true }); } catch { return; }

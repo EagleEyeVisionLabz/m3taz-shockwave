@@ -55,7 +55,7 @@ const ICON_PATH = path.join(__dirname, '..', '..', 'build', 'icon.png');
 // through unchanged.
 function popupContextMenu(win, template) {
   return new Promise((resolve) => {
-    let chosen = null;
+    let chosen: any = null;
     const items = template.map((item) => {
       if (item && typeof item === 'object' && 'value' in item && !item.click) {
         const { value, ...rest } = item;
@@ -156,7 +156,7 @@ function decryptSecret(stored) {
   if (!stored.startsWith(ENC_PREFIX)) return stored;
   try {
     return safeStorage.decryptString(Buffer.from(stored.slice(ENC_PREFIX.length), 'base64'));
-  } catch (err) {
+  } catch (err: any) {
     console.warn('[secrets] failed to decrypt:', err.message);
     return '';
   }
@@ -240,12 +240,12 @@ async function doWriteSettings(patch) {
   // Defensive deep-merge for codingAgent: a renderer caller that builds a
   // partial sub-object (e.g. forgetting systemPrompt) would otherwise wipe
   // sibling fields on disk via the shallow spread above.
-  if (patch.codingAgent && existing.codingAgent) {
-    out.codingAgent = { ...existing.codingAgent, ...patch.codingAgent };
+  if (patch.codingAgent && (existing as any).codingAgent) {
+    (out as any).codingAgent = { ...(existing as any).codingAgent, ...patch.codingAgent };
   }
   // Encrypt secret-bearing fields. encryptSecret is idempotent so values that
   // came from the on-disk file (already encrypted) pass through unchanged.
-  if (out.codingAgent) out.codingAgent.apiKey = encryptSecret(out.codingAgent.apiKey ?? '');
+  if ((out as any).codingAgent) (out as any).codingAgent.apiKey = encryptSecret((out as any).codingAgent.apiKey ?? '');
   if (Array.isArray(out.agentSecrets)) {
     out.agentSecrets = out.agentSecrets.map((s) => ({
       ...s,
@@ -300,7 +300,7 @@ function boundsAreVisible(bounds) {
 // maximizing).
 function attachWindowBoundsPersistence(win) {
   let normalBounds = win.getBounds();
-  let timer = null;
+  let timer: any = null;
 
   const save = () => {
     if (win.isDestroyed()) return;
@@ -338,7 +338,7 @@ async function createWindow() {
   const settings = await readSettings();
   const saved = settings.windowBounds;
   const useSaved = saved && boundsAreVisible(saved);
-  const opts = {
+  const opts: any = {
     ...DEFAULT_WINDOW_SIZE,
     title: APP_NAME,
     icon: ICON_PATH,
@@ -443,7 +443,7 @@ ipcMain.handle('fs:readTree', async (_evt, dirPath) => {
 
 async function readAllMarkdown(dirPath) {
   const paths = await walkMarkdownPaths(dirPath);
-  const out = [];
+  const out: any[] = [];
   for (const full of paths) {
     try {
       const [content, stat] = await Promise.all([
@@ -542,14 +542,14 @@ ipcMain.handle('fs:duplicateFile', async (_evt, filePath) => {
 ipcMain.handle('fs:trashFolder', async (evt, folderPath) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   const name = path.basename(folderPath);
-  let entries = [];
+  let entries: any[] = [];
   try {
     entries = (await fs.readdir(folderPath)).filter((n) => !n.startsWith('.'));
   } catch {
     entries = [];
   }
   const isEmpty = entries.length === 0;
-  const result = await dialog.showMessageBox(win, {
+  const result = await dialog.showMessageBox(win as any, {
     type: 'warning',
     title: 'Delete folder',
     message: `Delete "${name}"?`,
@@ -568,7 +568,7 @@ ipcMain.handle('fs:trashFolder', async (evt, folderPath) => {
 ipcMain.handle('fs:trashFile', async (evt, filePath) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   const name = path.basename(filePath);
-  const result = await dialog.showMessageBox(win, {
+  const result = await dialog.showMessageBox(win as any, {
     type: 'warning',
     title: 'Delete file',
     message: `Delete "${name}"?`,
@@ -588,12 +588,12 @@ ipcMain.handle('fs:trashFile', async (evt, filePath) => {
 // partial success still cleans up what it can.
 ipcMain.handle('fs:trashFiles', async (_evt, filePaths) => {
   if (!Array.isArray(filePaths)) return [];
-  const trashed = [];
+  const trashed: any[] = [];
   for (const p of filePaths) {
     try {
       await shell.trashItem(p);
       trashed.push(p);
-    } catch (err) {
+    } catch (err: any) {
       console.warn('[trashFiles] failed:', p, err);
     }
   }
@@ -621,7 +621,7 @@ ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
   const { isMd = true, isBookmarked = false, selectionCount = 1 } = opts;
   const multi = selectionCount > 1;
-  const template = [];
+  const template: any[] = [];
   if (multi) {
     // Bulk-safe actions only: open all in new tabs (if md), bookmark toggle, delete.
     // Rename/Duplicate/Reveal don't make sense across a selection.
@@ -808,7 +808,7 @@ ipcMain.handle('fs:renameFolder', async (_evt, { fromPath, toName }) => {
 
 ipcMain.handle('context:editorMenu', async (evt, { hasSelection, hasFilePath, hasLink } = {}) => {
   const win = BrowserWindow.fromWebContents(evt.sender);
-  const template = [];
+  const template: any[] = [];
   if (hasSelection) {
     template.push(
       { label: 'Add link',          value: EDITOR_ACTIONS.ADD_LINK },
@@ -862,7 +862,7 @@ ipcMain.handle('voice:getToken', async () => {
     if (!res.ok) return { error: 'Failed to get voice token' };
     const data = await res.json();
     return { token: data.token };
-  } catch (err) {
+  } catch (err: any) {
     console.warn('[voice] token request failed:', err.message);
     return { error: 'Voice token request failed' };
   }
@@ -1047,7 +1047,7 @@ ipcMain.handle('agent:send', async (evt, { text, images }) => {
       },
       (event) => emit('agent:event', event),
     );
-  } catch (err) {
+  } catch (err: any) {
     emit('agent:error', { message: err?.message ?? String(err) });
   }
 });
@@ -1097,7 +1097,7 @@ ipcMain.handle('agent:getDefaultSystemPrompt', async () => DEFAULT_AGENT_SYSTEM_
 // key, which is insufficient for those.
 //
 ipcMain.handle('agent:listProviders', () => {
-  return getProviders().filter((slug) => SUPPORTED_PROVIDER_SLUGS.has(slug)).sort();
+  return getProviders().filter((slug) => SUPPORTED_PROVIDER_SLUGS.has(slug as any)).sort();
 });
 
 ipcMain.handle('agent:listModels', (_evt, provider) => {
@@ -1162,14 +1162,14 @@ ipcMain.handle('fs:pathExists', async (_evt, p) => {
 const WATCH_DEBOUNCE_MS = 150;
 const RENAME_GRACE_MS = 800;   // how long we hold an unlink waiting for a possible add to pair with
 
-let currentWatcher = null;
-let watcherRootDir = null;
-let watcherWindowId = null;
+let currentWatcher: any = null;
+let watcherRootDir: any = null;
+let watcherWindowId: any = null;
 let pendingByPath = new Map();    // path -> 'add' | 'change' | 'unlink'
 let pendingTreeOnly = false;       // folder events or non-.md events
-let flushTimer = null;
-let correlator = null;             // createRenameCorrelator instance, reset per workspace
-let renameQueue = [];              // emitted rename events awaiting flush to renderer
+let flushTimer: any = null;
+let correlator: any = null;             // createRenameCorrelator instance, reset per workspace
+let renameQueue: any[] = [];              // emitted rename events awaiting flush to renderer
 
 function senderWindow() {
   if (watcherWindowId == null) return null;
@@ -1237,7 +1237,7 @@ async function flushWatcher() {
         mtime: stat.mtimeMs,
         outgoingLinks: parseLinks(content),
       });
-    } catch (err) {
+    } catch (err: any) {
       // ENOENT = file was deleted between watcher event and read (expected
       // race). Anything else (permission denied, decode error) is worth
       // surfacing so users can investigate why their file isn't appearing.

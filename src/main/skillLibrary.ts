@@ -27,7 +27,7 @@ export async function ensureDirs(userDataDir) {
 
 // Pull `name` and `description` out of `--- … ---` YAML frontmatter.
 // Pi already validates these — we just need them to display in the UI.
-function parseFrontmatter(text) {
+function parseFrontmatter(text): any {
   const m = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
   if (!m) return {};
   const out = {};
@@ -67,7 +67,7 @@ export async function listInstalled(userDataDir) {
   const dir = libraryDirFor(userDataDir);
   await ensureDirs(userDataDir);
   const entries = await fs.readdir(dir, { withFileTypes: true });
-  const out = [];
+  const out: any[] = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     if (e.name.startsWith('.')) continue;
@@ -101,7 +101,7 @@ export async function importFromPath(userDataDir, srcPath) {
   try {
     await fs.access(destPath);
     throw new Error(`A skill named "${destName}" already exists. Delete it first to replace.`);
-  } catch (err) {
+  } catch (err: any) {
     if (err.code !== 'ENOENT') throw err;
   }
 
@@ -123,7 +123,7 @@ export async function removeSkill(userDataDir, folderName) {
 export function computeEffectivePaths(installed, skillsState, workspaceId) {
   const globalState = skillsState?.global ?? {};
   const wsState = (workspaceId && skillsState?.workspaces?.[workspaceId]) || {};
-  const enabled = [];
+  const enabled: any[] = [];
   for (const skill of installed) {
     if (!skill.hasSkillMd) continue;
     const wsValue = wsState[skill.folderName];
@@ -140,10 +140,10 @@ export function computeEffectivePaths(installed, skillsState, workspaceId) {
 // loads exactly that set on next session boot. Merges into any existing pi
 // settings file to preserve anything pi has put there itself. Either field
 // may be omitted; the existing value is kept untouched.
-export async function writePiSettings(userDataDir, { skills, extensions } = {}) {
+export async function writePiSettings(userDataDir, { skills, extensions }: any = {}) {
   await ensureDirs(userDataDir);
   const file = piSettingsPath(userDataDir);
-  let current = {};
+  let current: any = {};
   try {
     const raw = await fs.readFile(file, 'utf8');
     current = JSON.parse(raw);
@@ -151,7 +151,7 @@ export async function writePiSettings(userDataDir, { skills, extensions } = {}) 
   } catch {
     current = {};
   }
-  const next = { ...current };
+  const next: any = { ...current };
   if (Array.isArray(skills)) next.skills = skills;
   if (Array.isArray(extensions)) next.extensions = extensions;
   const tmp = `${file}.tmp`;

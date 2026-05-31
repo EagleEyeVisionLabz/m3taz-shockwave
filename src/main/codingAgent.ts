@@ -16,7 +16,7 @@ import { agentDirFor, ensureDirs, listInstalled, computeEffectivePaths, writePiS
 import { ensureAgentTokensExtension } from './agentTokensExtension.js';
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 
-const state = {
+const state: any = {
   session: null,
   unsubscribe: null,
   key: null,
@@ -107,7 +107,7 @@ export async function agentSend(opts, emitEvent) {
   // the failure assistant after; both stay in context and re-poison every
   // subsequent turn. We splice them out and tell the renderer to drop the
   // matching transcript entries.
-  let lastFailureError = null;
+  let lastFailureError: any = null;
   const wrappedEmit = (event) => {
     if (event?.type === 'agent_end' && Array.isArray(event.messages)) {
       const failure = event.messages.find(

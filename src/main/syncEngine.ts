@@ -25,7 +25,7 @@ import { gitSpawn, workspaceStatus, parseGithubUrl } from './sync.js';
 
 // ─── Engine state ──────────────────────────────────────────────────────────
 
-let state = {
+let state: any = {
   running: false,           // is the tick interval armed?
   workspacePath: null,
   pat: null,
@@ -72,12 +72,12 @@ let nextFlushToken = 1;
 
 function requestFlush() {
   const win = state.windowId ? BrowserWindow.fromId(state.windowId) : null;
-  if (!win || win.isDestroyed()) return Promise.resolve();
+  if (!win || win.isDestroyed()) return Promise.resolve(undefined);
   const token = nextFlushToken++;
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     const timer = setTimeout(() => {
       pendingFlushes.delete(token);
-      resolve();
+      resolve(undefined);
     }, 1000);
     pendingFlushes.set(token, { resolve, timer });
     win.webContents.send('sync:flushRequest', token);
@@ -89,7 +89,7 @@ export function handleFlushDone(token) {
   if (!entry) return;
   clearTimeout(entry.timer);
   pendingFlushes.delete(token);
-  entry.resolve();
+  entry.resolve(undefined);
 }
 
 // ─── Tick ──────────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ async function runTick() {
   if (state.ticking) return; // serial: never overlap a tick with itself
   state.ticking = true;
   let tickResolve;
-  state.pendingTickPromise = new Promise((res) => { tickResolve = res; });
+  state.pendingTickPromise = new Promise<any>((res) => { tickResolve = res; });
 
   try {
     // If we're sitting in a paused rebase, don't try to do anything — the
