@@ -25,6 +25,7 @@ import { syntaxTree } from '@codemirror/language';
 import { dirOf } from './pathUtils';
 
 class ImageWidget extends WidgetType {
+  url; alt; linkUrl; length;
   constructor(url, alt, linkUrl, length) {
     super();
     this.url = url;
@@ -85,7 +86,7 @@ class ImageWidget extends WidgetType {
 // Walk up from a position to find a wrapping Link node, and extract its URL.
 function findWrappingLinkUrl(state, pos) {
   const tree = syntaxTree(state);
-  let node = tree.resolveInner(pos, 1);
+  let node: any = tree.resolveInner(pos, 1);
   while (node) {
     if (node.name === 'Link') {
       // Look for a URL child.
@@ -115,7 +116,7 @@ function resolveImageUrl(raw, activeDir, vault) {
   if (decoded.startsWith('/')) abs = decoded;
   else abs = (activeDir ? activeDir + '/' : '') + decoded;
   const parts = abs.split('/');
-  const norm = [];
+  const norm: string[] = [];
   for (const seg of parts) {
     if (seg === '' || seg === '.') continue;
     if (seg === '..') norm.pop();
@@ -147,6 +148,7 @@ export function imageWidgets(getActiveFilePath, getVaultPath) {
 
   return ViewPlugin.fromClass(
     class {
+      decorations;
       constructor(view) {
         this.decorations = matcher.createDeco(view);
       }

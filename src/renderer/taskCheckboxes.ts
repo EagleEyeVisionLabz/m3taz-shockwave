@@ -8,6 +8,7 @@ import { RangeSetBuilder } from '@codemirror/state';
 const TASK_RE = /^(\s*)([-*+]\s+)\[([ xX])\]/;
 
 class CheckboxWidget extends WidgetType {
+  checked; prefixLength;
   constructor(checked, prefixLength) {
     super();
     this.checked = checked;
@@ -75,6 +76,7 @@ function buildDecorations(view) {
 
 export const taskCheckboxes = ViewPlugin.fromClass(
   class {
+    decorations;
     constructor(view) {
       this.decorations = buildDecorations(view);
     }

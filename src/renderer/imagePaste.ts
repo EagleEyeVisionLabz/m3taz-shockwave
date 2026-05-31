@@ -51,7 +51,7 @@ async function handleImageFiles(view, files, { getActiveFilePath, flushDraftToDi
   if (!activePath && flushDraftToDisk) {
     try {
       activePath = await flushDraftToDisk();
-    } catch (err) {
+    } catch (err: any) {
       onError?.(err?.message ?? String(err));
       return;
     }
@@ -66,7 +66,7 @@ async function handleImageFiles(view, files, { getActiveFilePath, flushDraftToDi
     return;
   }
 
-  const insertions = [];
+  const insertions: string[] = [];
   for (const file of files) {
     const ext = extFor(file);
     if (!ext) continue;
@@ -76,7 +76,7 @@ async function handleImageFiles(view, files, { getActiveFilePath, flushDraftToDi
       const savedAbsPath = await window.api.writeImage(targetDir, bytes, ext, baseName);
       const filename = savedAbsPath.slice(savedAbsPath.lastIndexOf('/') + 1);
       insertions.push(`![](${encodeMarkdownUrl(filename)})`);
-    } catch (err) {
+    } catch (err: any) {
       onError?.(err?.message ?? String(err));
     }
   }
@@ -135,7 +135,7 @@ async function insertSidebarImage(view, srcAbsPath, { getActiveFilePath, flushDr
   if (!activePath && flushDraftToDisk) {
     try {
       activePath = await flushDraftToDisk();
-    } catch (err) {
+    } catch (err: any) {
       onError?.(err?.message ?? String(err));
       return;
     }

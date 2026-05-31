@@ -42,6 +42,7 @@ function buildDecorations(view) {
 
 export const bulletPoints = ViewPlugin.fromClass(
   class {
+    decorations;
     constructor(view) {
       this.decorations = buildDecorations(view);
     }

@@ -10,6 +10,7 @@ function splitLink(raw) {
 }
 
 class LinkWidget extends WidgetType {
+  targetName; resolved; display; onClick;
   constructor(targetName, display, resolved, onClick) {
     super();
     this.targetName = targetName;
@@ -73,6 +74,8 @@ function buildDecorations(view, onClick, pageIndex) {
 export function wikiLinks(onClick, getPageIndex) {
   return ViewPlugin.fromClass(
     class {
+      decorations;
+      pageIndex;
       constructor(view) {
         this.pageIndex = getPageIndex();
         this.decorations = buildDecorations(view, onClick, this.pageIndex);

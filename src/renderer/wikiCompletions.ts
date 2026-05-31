@@ -25,7 +25,7 @@ export function wikiLinkCompletions(getPageIndex, getVaultPath) {
     const start = context.pos - m[1].length;
     const index = getPageIndex();
     const vaultPath = getVaultPath();
-    const options = [];
+    const options: any[] = [];
     for (const [key, path] of index) {
       if (!key.includes(partial)) continue;
       const display = prettyName(path).split('/').pop();

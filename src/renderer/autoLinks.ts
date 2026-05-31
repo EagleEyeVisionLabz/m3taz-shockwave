@@ -22,6 +22,7 @@ const URL_RE = /\bhttps?:\/\/[^\s<>()[\]{}'"`]+/g;
 const TRAILING_PUNCT_RE = /[.,;:!?)\]]+$/;
 
 class UrlWidget extends WidgetType {
+  url;
   constructor(url) {
     super();
     this.url = url;
@@ -93,6 +94,7 @@ function buildDecorations(view) {
 
 export const autoLinks = ViewPlugin.fromClass(
   class {
+    decorations;
     constructor(view) {
       this.decorations = buildDecorations(view);
     }

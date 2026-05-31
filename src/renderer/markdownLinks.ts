@@ -8,6 +8,7 @@ import { RangeSetBuilder } from '@codemirror/state';
 import { syntaxTree } from '@codemirror/language';
 
 class MdLinkWidget extends WidgetType {
+  url; text;
   constructor(text, url) {
     super();
     this.text = text;
@@ -40,7 +41,7 @@ function extractParts(state, linkNode) {
   let openBracketEnd = -1;
   let closeBracketStart = -1;
   let urlText = '';
-  let imageRange = null;
+  let imageRange: any = null;
   if (!linkNode.firstChild) return null;
   let cursor = linkNode.cursor();
   if (!cursor.firstChild()) return null;
@@ -79,7 +80,7 @@ function buildDecorations(view) {
 
   // Collect first, then sort + emit — image-link wrappers emit two ranges
   // (prefix + suffix) and RangeSetBuilder requires strictly ordered input.
-  const decos = [];
+  const decos: any[] = [];
   for (const { from, to } of view.visibleRanges) {
     syntaxTree(state).iterate({
       from,
@@ -123,7 +124,7 @@ function buildDecorations(view) {
 // Used by the editor context menu to enable Edit / Remove link.
 export function findLinkAtPos(state, pos) {
   const tree = syntaxTree(state);
-  let node = tree.resolveInner(pos, 1);
+  let node: any = tree.resolveInner(pos, 1);
   while (node && node.name !== 'Link') node = node.parent;
   if (!node) return null;
   const parts = extractParts(state, node);
@@ -133,6 +134,7 @@ export function findLinkAtPos(state, pos) {
 
 export const markdownLinks = ViewPlugin.fromClass(
   class {
+    decorations;
     constructor(view) {
       this.decorations = buildDecorations(view);
     }

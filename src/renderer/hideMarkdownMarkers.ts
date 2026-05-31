@@ -66,6 +66,7 @@ function buildDecorations(view) {
 
 export const hideMarkdownMarkers = ViewPlugin.fromClass(
   class {
+    decorations;
     constructor(view) {
       this.decorations = buildDecorations(view);
     }

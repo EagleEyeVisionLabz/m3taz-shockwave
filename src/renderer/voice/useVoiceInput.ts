@@ -39,15 +39,15 @@ export function useVoiceInput({ getToken, onTranscript, onPartialTranscript, onE
   const [isConnecting, setIsConnecting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
-  const wsRef = useRef(null);
-  const streamRef = useRef(null);
-  const audioCtxRef = useRef(null);
-  const workletRef = useRef(null);
-  const sourceRef = useRef(null);
+  const wsRef = useRef<any>(null);
+  const streamRef = useRef<any>(null);
+  const audioCtxRef = useRef<any>(null);
+  const workletRef = useRef<any>(null);
+  const sourceRef = useRef<any>(null);
   const cleaningUpRef = useRef(false);
   const connectingRef = useRef(false);
 
-  const tokenRef = useRef(null);
+  const tokenRef = useRef<any>(null);
   const tokenTimeRef = useRef(0);
   const TOKEN_MAX_AGE = 50_000;
 
@@ -195,7 +195,7 @@ export function useVoiceInput({ getToken, onTranscript, onPartialTranscript, onE
       ws.onclose = () => {
         cleanup();
       };
-    } catch (err) {
+    } catch (err: any) {
       if (err.name === 'NotAllowedError') {
         onError?.('Microphone permission denied');
       } else {
