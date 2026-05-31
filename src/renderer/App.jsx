@@ -19,7 +19,7 @@ import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
 import { basenameOf, dirOf } from './pathUtils.js';
 import { prettyName } from './linkIndex.js';
-import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, DEFAULT_PROVIDER_SLUG, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
+import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
 import SortBar from './SortBar.jsx';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
@@ -29,6 +29,7 @@ import { useBookmarks, filterTreeToBookmarks } from './hooks/useBookmarks';
 import { useDailyNote } from './hooks/useDailyNote';
 import { useSendToAgent } from './hooks/useSendToAgent';
 import { useFsWatcher } from './hooks/useFsWatcher';
+import { useSettings } from './hooks/useSettings';
 
 const SAVE_DEBOUNCE_MS = 500;
 
@@ -103,27 +104,9 @@ export default function App() {
   const [quickSearchOpen, setQuickSearchOpen] = useState(false);
   // Bookmarks live in useBookmarks (called below, after workspacePath + showError
   // exist). sortedTree is defined there too, since it consumes the bookmark set.
-  const [themeMode, setThemeMode] = useState(THEME_MODES.SYSTEM);
-  const [hideLineNumbers, setHideLineNumbers] = useState(false);
-  const [dailyNote, setDailyNote] = useState({ format: 'YYYY-MM-DD', folder: '' });
-  const dailyNoteRef = useSyncRef(dailyNote);
-  const [treeSortOrder, setTreeSortOrder] = useState(TREE_SORT_ORDERS.NAME_ASC);
-  const [codingAgentSettings, setCodingAgentSettings] = useState({
-    provider: DEFAULT_PROVIDER_SLUG,
-    model: 'claude-sonnet-4-5',
-    apiKey: '',
-    skills: { global: {}, workspaces: {} },
-  });
-  // Global agent secrets — list of { name, description, token, createdAt, updatedAt }.
-  // Tokens come from main already decrypted; persisted via the standard settings flow.
-  const [agentSecrets, setAgentSecrets] = useState([]);
-  // AssemblyAI streaming transcription config. apiKey arrives decrypted from main.
-  const [transcription, setTranscription] = useState({ provider: 'assemblyai', apiKey: '' });
-  // GitHub sync config. PAT arrives decrypted from main and is sent back as
-  // plaintext on every save (main re-encrypts via safeStorage's idempotent
-  // encryptSecret).
-  const [sync, setSync] = useState({ pat: '', pullIntervalSeconds: 10, disabledWorkspaceIds: [] });
-  const syncRef = useSyncRef(sync);
+  // Persisted settings (themeMode, dailyNote, codingAgent, sync, etc.) + the
+  // canonical settingsRef + persistSettings live in useSettings (called below,
+  // once workspacePath exists).
   const [systemPrefersDark, setSystemPrefersDark] = useState(false);
   const [bootDone, setBootDone] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
@@ -146,26 +129,14 @@ export default function App() {
   const workspacePath = activeWorkspace?.path ?? null;
   const workspacePathRef = useSyncRef(workspacePath);
 
-  // Single canonical copy of everything we persist to settings.json. `persistSettings`
-  // merges its patch into this and writes the WHOLE object, so a save can never
-  // drop an unrelated field because some per-field ref was stale. Seeded from
-  // disk in the boot effect; defaults here mirror the useState initializers above.
-  const settingsRef = useRef({
-    workspaces: [],
-    activeWorkspaceId: null,
-    themeMode: THEME_MODES.SYSTEM,
-    hideLineNumbers: false,
-    dailyNote: { format: 'YYYY-MM-DD', folder: '' },
-    treeSortOrder: TREE_SORT_ORDERS.NAME_ASC,
-    codingAgent: { provider: DEFAULT_PROVIDER_SLUG, model: 'claude-sonnet-4-5', apiKey: '', skills: { global: {}, workspaces: {} } },
-    agentSecrets: [],
-    transcription: { provider: 'assemblyai', apiKey: '' },
-    sync: { pat: '', pullIntervalSeconds: 10, disabledWorkspaceIds: [] },
-    sidebarWidth: 260,
-    viewMode: VIEW_MODES.LIVE,
-    chatSidebarOpen: false,
-    chatSidebarWidth: 360,
-  });
+  const {
+    themeMode, hideLineNumbers, dailyNote, dailyNoteRef, treeSortOrder,
+    codingAgentSettings, agentSecrets, transcription, sync, syncRef,
+    saveStatus, persistSettings, hydrateSettings,
+    onThemeModeChange, onHideLineNumbersChange, onDailyNoteChange, onTreeSortOrderChange,
+    onCodingAgentChange, onAgentSecretsChange, onTranscriptionChange,
+    onSyncChange, onSyncDisabledChange,
+  } = useSettings({ activeWorkspacePath: workspacePath });
 
   // Live ref to the active file's absolute path. Used by the editor's image
   // paste/drop handler (target dir for the saved image) and the inline image
@@ -442,64 +413,10 @@ export default function App() {
 
   // ---- workspace operations ----
 
-  // 'idle' | 'saving' | 'saved' | 'error'. `idle` hides the indicator; we land
-  // there 1.5s after a successful save so the badge fades out when nothing's
-  // happening. A ref counts in-flight writes so overlapping saves don't flip
-  // us back to 'saved' too early.
-  const [saveStatus, setSaveStatus] = useState('idle');
-  const inFlightSavesRef = useRef(0);
-  const savedFadeTimerRef = useRef(null);
-
-  const persistSettings = useCallback(async (next) => {
-    // Merge the patch into the one canonical object, then write the whole thing.
-    // Callers pass only what changed; everything else comes from the last-known
-    // state, so no field can be dropped by a stale per-field ref.
-    const s = { ...settingsRef.current, ...next };
-    settingsRef.current = s;
-    inFlightSavesRef.current += 1;
-    if (savedFadeTimerRef.current) {
-      clearTimeout(savedFadeTimerRef.current);
-      savedFadeTimerRef.current = null;
-    }
-    setSaveStatus('saving');
-    try {
-      await window.api.settings.write({
-        workspaces: s.workspaces,
-        activeWorkspaceId: s.activeWorkspaceId,
-        appearance: {
-          themeMode: s.themeMode,
-          hideLineNumbers: s.hideLineNumbers,
-        },
-        dailyNote: s.dailyNote,
-        treeSortOrder: s.treeSortOrder,
-        codingAgent: s.codingAgent,
-        agentSecrets: s.agentSecrets,
-        transcription: s.transcription,
-        sync: s.sync,
-        sidebarWidth: s.sidebarWidth,
-        viewMode: s.viewMode,
-        chatSidebarOpen: s.chatSidebarOpen,
-        chatSidebarWidth: s.chatSidebarWidth,
-      });
-      inFlightSavesRef.current -= 1;
-      if (inFlightSavesRef.current === 0) {
-        setSaveStatus('saved');
-        // Fade back to idle after 1.5s so the badge isn't permanent.
-        savedFadeTimerRef.current = setTimeout(() => {
-          savedFadeTimerRef.current = null;
-          setSaveStatus('idle');
-        }, 1500);
-      }
-    } catch {
-      inFlightSavesRef.current -= 1;
-      setSaveStatus('error');
-    }
-  }, []);
-
   const persistSidebarWidth = useCallback(async (width) => {
     sidebarWidthRef.current = width;
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, sidebarWidth: width });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
+    await persistSettings({ sidebarWidth: width });
+  }, [persistSettings]);
 
   const loadWorkspace = useCallback(async (workspace) => {
     await writeNow();
@@ -537,12 +454,12 @@ export default function App() {
       const removed = workspaces.filter((w) => w.id !== id);
       setWorkspaces(removed);
       setActiveWorkspaceId(null);
-      await persistSettings({ workspaces: removed, activeWorkspaceId: null, themeMode });
+      await persistSettings({ workspaces: removed, activeWorkspaceId: null });
       showError(`Workspace "${ws.name}" no longer exists.`);
       return;
     }
     setActiveWorkspaceId(id);
-    await persistSettings({ workspaces, activeWorkspaceId: id, themeMode });
+    await persistSettings({ workspaces, activeWorkspaceId: id });
     await loadWorkspace(ws);
   }, [workspaces, persistSettings, themeMode, loadWorkspace, showError]);
 
@@ -558,7 +475,7 @@ export default function App() {
     const next = [...workspaces, ws];
     setWorkspaces(next);
     setActiveWorkspaceId(ws.id);
-    await persistSettings({ workspaces: next, activeWorkspaceId: ws.id, themeMode });
+    await persistSettings({ workspaces: next, activeWorkspaceId: ws.id });
     await loadWorkspace(ws);
   }, [workspaces, persistSettings, themeMode, loadWorkspace, switchWorkspace]);
 
@@ -574,29 +491,8 @@ export default function App() {
       setSelectedFolderPath(null);
       await window.api.watchStop();
     }
-    await persistSettings({ workspaces: next, activeWorkspaceId: newActive, themeMode });
+    await persistSettings({ workspaces: next, activeWorkspaceId: newActive });
   }, [workspaces, activeWorkspaceId, persistSettings, themeMode, resetTabs]);
-
-  const onThemeModeChange = useCallback(async (mode) => {
-    setThemeMode(mode);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode: mode });
-  }, [persistSettings, workspaces, activeWorkspaceId]);
-
-  const onHideLineNumbersChange = useCallback(async (next) => {
-    setHideLineNumbers(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, hideLineNumbers: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
-
-  const onDailyNoteChange = useCallback(async (next) => {
-    setDailyNote(next);
-    dailyNoteRef.current = next;
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, dailyNote: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
-
-  const onTreeSortOrderChange = useCallback(async (next) => {
-    setTreeSortOrder(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, treeSortOrder: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
 
   // Bulk-delete confirmation state. Set by the action wrapper when DELETE
@@ -661,58 +557,11 @@ export default function App() {
   const onToggleViewMode = useCallback(async () => {
     const next = viewMode === VIEW_MODES.LIVE ? VIEW_MODES.RAW : VIEW_MODES.LIVE;
     setViewMode(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, viewMode: next });
+    await persistSettings({ viewMode: next });
   }, [viewMode, persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const onUndo = useCallback(() => { editorRef.current?.undo(); }, []);
   const onRedo = useCallback(() => { editorRef.current?.redo(); }, []);
-
-  const onCodingAgentChange = useCallback(async (next) => {
-    setCodingAgentSettings(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, codingAgent: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
-
-  const onAgentSecretsChange = useCallback(async (next) => {
-    setAgentSecrets(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, agentSecrets: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
-
-  const onTranscriptionChange = useCallback(async (next) => {
-    setTranscription(next);
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, transcription: next });
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
-
-  // Per-workspace sync disable/enable toggle. The IPC handles persistence +
-  // engine reconciliation; we just mirror the new disabled-set into local
-  // state so the Settings UI re-renders with the right button labels.
-  const onSyncDisabledChange = useCallback((workspaceId, disabled) => {
-    setSync((prev) => {
-      const cur = new Set(prev.disabledWorkspaceIds || []);
-      if (disabled) cur.add(workspaceId);
-      else cur.delete(workspaceId);
-      const next = { ...prev, disabledWorkspaceIds: [...cur] };
-      syncRef.current = next;
-      // Keep the canonical object current so a later save doesn't write a stale
-      // sync (this handler persists via IPC, not persistSettings).
-      settingsRef.current = { ...settingsRef.current, sync: next };
-      return next;
-    });
-  }, []);
-
-  const onSyncChange = useCallback(async (next) => {
-    setSync(next);
-    syncRef.current = next;
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode, sync: next });
-    // Restart the engine so PAT / interval changes take effect immediately.
-    // engineStart no-ops cleanly when there's no active workspace.
-    const ws = workspaces.find((w) => w.id === activeWorkspaceId);
-    if (ws) {
-      window.api.sync.engineStart({
-        workspacePath: ws.path,
-        intervalSeconds: next.pullIntervalSeconds,
-      }).catch(() => {});
-    }
-  }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   // ---- title commit (rename existing or save draft with this name) ----
   const onTitleCommit = useCallback(async (newName) => {
@@ -998,81 +847,11 @@ export default function App() {
         window.api.theme.getInitial(),
       ]);
       if (!active) return;
-      // Seed the canonical settings object from disk before any user action can
-      // trigger a save — otherwise an unchanged field would be written as its
-      // default and clobber the real value.
-      settingsRef.current = {
-        workspaces: settings.workspaces || [],
-        activeWorkspaceId: settings.activeWorkspaceId ?? null,
-        themeMode: settings.appearance?.themeMode || THEME_MODES.SYSTEM,
-        hideLineNumbers: !!settings.appearance?.hideLineNumbers,
-        dailyNote: {
-          format: settings.dailyNote?.format || 'YYYY-MM-DD',
-          folder: settings.dailyNote?.folder ?? '',
-        },
-        treeSortOrder: typeof settings.treeSortOrder === 'string' ? settings.treeSortOrder : TREE_SORT_ORDERS.NAME_ASC,
-        codingAgent: settings.codingAgent ?? settingsRef.current.codingAgent,
-        agentSecrets: Array.isArray(settings.agentSecrets) ? settings.agentSecrets : [],
-        transcription: {
-          provider: settings.transcription?.provider || 'assemblyai',
-          apiKey: settings.transcription?.apiKey || '',
-        },
-        sync: {
-          pat: settings.sync?.pat || '',
-          pullIntervalSeconds:
-            typeof settings.sync?.pullIntervalSeconds === 'number' && settings.sync.pullIntervalSeconds > 0
-              ? settings.sync.pullIntervalSeconds
-              : 10,
-          disabledWorkspaceIds: Array.isArray(settings.sync?.disabledWorkspaceIds) ? settings.sync.disabledWorkspaceIds : [],
-        },
-        sidebarWidth: typeof settings.sidebarWidth === 'number' ? settings.sidebarWidth : 260,
-        viewMode: settings.viewMode === VIEW_MODES.RAW || settings.viewMode === VIEW_MODES.LIVE ? settings.viewMode : VIEW_MODES.LIVE,
-        chatSidebarOpen: typeof settings.chatSidebarOpen === 'boolean' ? settings.chatSidebarOpen : false,
-        chatSidebarWidth: typeof settings.chatSidebarWidth === 'number' ? settings.chatSidebarWidth : 360,
-      };
+      // Seed settings state + the canonical settingsRef from disk before any
+      // save can fire (so an unchanged field isn't written as its default).
+      hydrateSettings(settings);
       setSystemPrefersDark(!!initialTheme.dark);
-      setThemeMode(settings.appearance?.themeMode || THEME_MODES.SYSTEM);
-      const hide = !!settings.appearance?.hideLineNumbers;
-      setHideLineNumbers(hide);
-      if (settings.dailyNote) {
-        const dn = {
-          format: settings.dailyNote.format || 'YYYY-MM-DD',
-          folder: settings.dailyNote.folder ?? '',
-        };
-        setDailyNote(dn);
-        dailyNoteRef.current = dn;
-      }
-      if (typeof settings.treeSortOrder === 'string') {
-        setTreeSortOrder(settings.treeSortOrder);
-      }
       setWorkspaces(settings.workspaces || []);
-      if (settings.codingAgent) {
-        setCodingAgentSettings(settings.codingAgent);
-      }
-      if (Array.isArray(settings.agentSecrets)) {
-        setAgentSecrets(settings.agentSecrets);
-      }
-      if (settings.transcription) {
-        const t = {
-          provider: settings.transcription.provider || 'assemblyai',
-          apiKey: settings.transcription.apiKey || '',
-        };
-        setTranscription(t);
-      }
-      if (settings.sync) {
-        const s = {
-          pat: settings.sync.pat || '',
-          pullIntervalSeconds:
-            typeof settings.sync.pullIntervalSeconds === 'number' && settings.sync.pullIntervalSeconds > 0
-              ? settings.sync.pullIntervalSeconds
-              : 10,
-          disabledWorkspaceIds: Array.isArray(settings.sync.disabledWorkspaceIds)
-            ? settings.sync.disabledWorkspaceIds
-            : [],
-        };
-        setSync(s);
-        syncRef.current = s;
-      }
       if (typeof settings.sidebarWidth === 'number') {
         setSidebarWidth(settings.sidebarWidth);
         sidebarWidthRef.current = settings.sidebarWidth;
@@ -1219,7 +998,7 @@ export default function App() {
   }, [persistSidebarWidth]);
 
   const persistChatSidebar = useCallback(async () => {
-    await persistSettings({ workspaces, activeWorkspaceId, themeMode });
+    await persistSettings({ workspaces, activeWorkspaceId });
   }, [persistSettings, workspaces, activeWorkspaceId, themeMode]);
 
   const toggleChatSidebar = useCallback(() => {
