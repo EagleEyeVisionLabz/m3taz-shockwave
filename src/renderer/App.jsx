@@ -17,7 +17,7 @@ import Dialog from './Dialog.jsx';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import JournalDatePicker from './JournalDatePicker.jsx';
 import QuickSearch from './QuickSearch.jsx';
-import { basenameOf, dirOf } from './pathUtils.js';
+import { basenameOf, dirOf } from './pathUtils';
 import { prettyName } from './linkIndex.js';
 import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
 import SortBar from './SortBar.jsx';

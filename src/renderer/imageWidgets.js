@@ -22,7 +22,7 @@ import {
   WidgetType,
 } from '@codemirror/view';
 import { syntaxTree } from '@codemirror/language';
-import { dirOf } from './pathUtils.js';
+import { dirOf } from './pathUtils';
 
 class ImageWidget extends WidgetType {
   constructor(url, alt, linkUrl, length) {

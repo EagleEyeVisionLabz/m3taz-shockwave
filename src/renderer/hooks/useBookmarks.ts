@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useSyncRef } from './useSyncRef';
-import { toRelPath, toAbsPath } from '../pathUtils.js';
+import { toRelPath, toAbsPath } from '../pathUtils';
 import type { TreeNode } from '../../shared/api';
 
 // Prune the tree to only the bookmarked files and the folders that contain
@@ -54,7 +54,7 @@ export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
     setBookmarks(absSet);
     bookmarksRef.current = absSet;
     if (needsRewrite) {
-      const cleaned = Array.from(absSet).map((p) => toRelPath(p, wsPath)).filter(Boolean);
+      const cleaned = Array.from(absSet).map((p) => toRelPath(p, wsPath)).filter((p): p is string => p !== null);
       window.api.bookmarks.write(wsPath, cleaned).catch(() => {});
     }
   }, [bookmarksRef]);
@@ -67,7 +67,7 @@ export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
     else next.add(absPath);
     setBookmarks(next);
     bookmarksRef.current = next;
-    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter((p): p is string => p !== null);
     try {
       await window.api.bookmarks.write(workspacePath, rels);
     } catch (err: any) {
@@ -85,7 +85,7 @@ export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
     }
     setBookmarks(next);
     bookmarksRef.current = next;
-    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    const rels = Array.from(next).map((p) => toRelPath(p, workspacePath)).filter((p): p is string => p !== null);
     try {
       await window.api.bookmarks.write(workspacePath, rels);
     } catch (err: any) {
@@ -119,7 +119,7 @@ export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
   // Persist the current set to disk (after batched rename/delete edits).
   const persistBookmarks = useCallback(async () => {
     if (!workspacePath) return;
-    const rels = Array.from(bookmarksRef.current).map((p) => toRelPath(p, workspacePath)).filter(Boolean);
+    const rels = Array.from(bookmarksRef.current).map((p) => toRelPath(p, workspacePath)).filter((p): p is string => p !== null);
     try {
       await window.api.bookmarks.write(workspacePath, rels);
     } catch (err) {

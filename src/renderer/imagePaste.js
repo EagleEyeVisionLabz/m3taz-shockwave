@@ -16,7 +16,7 @@
 //   collisions get " 1", " 2", … appended automatically.
 
 import { EditorView, ViewPlugin } from '@codemirror/view';
-import { dirOf } from './pathUtils.js';
+import { dirOf } from './pathUtils';
 
 const MIME_TO_EXT = {
   'image/png': '.png',
