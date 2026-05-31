@@ -8,6 +8,7 @@ import { autocompletion, completionKeymap } from '@codemirror/autocomplete';
 import { indentationMarkers } from '@replit/codemirror-indentation-markers';
 import { oneDark } from '@codemirror/theme-one-dark';
 import { taskCheckboxes, taskEnterKeymap } from './taskCheckboxes.js';
+import { blankLineOutdentKeymap } from './blankLineOutdent.js';
 import { bulletPoints } from './bulletPoints.js';
 import { wikiLinks } from './wikiLinks.js';
 import { wikiLinkCompletions } from './wikiCompletions.js';
@@ -348,6 +349,7 @@ const Editor = forwardRef<any, any>(function Editor(
         ...completionKeymap,
         ...taskEnterKeymap,
         ...markdownKeymap,
+        ...blankLineOutdentKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),
