@@ -194,6 +194,12 @@ contextBridge.exposeInMainWorld('api', {
     read: (workspacePath) => ipcRenderer.invoke('bookmarks:read', workspacePath),
     /** @param {string} workspacePath @param {string[]} paths Workspace-relative POSIX paths. @returns {Promise<void>} */
     write: (workspacePath, paths) => ipcRenderer.invoke('bookmarks:write', { workspacePath, paths }),
+    /** Fires when bookmarks.json changes on disk (sync, another machine, hand edit). @param {() => void} cb @returns {() => void} unsubscribe */
+    onChanged: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on('bookmarks:changed', listener);
+      return () => ipcRenderer.removeListener('bookmarks:changed', listener);
+    },
   },
 
   // ---- Settings -----------------------------------------------------------

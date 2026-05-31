@@ -122,6 +122,8 @@ export interface ShockwaveApi {
   bookmarks: {
     read(workspacePath: string): Promise<string[]>;
     write(workspacePath: string, paths: string[]): Promise<void>;
+    /** Fires when bookmarks.json changes on disk (sync, another machine, hand edit). */
+    onChanged(cb: () => void): Unsubscribe;
   };
 
   settings: {

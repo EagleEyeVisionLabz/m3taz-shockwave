@@ -128,6 +128,7 @@ export default function App() {
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) || null;
   const workspacePath = activeWorkspace?.path ?? null;
   const workspacePathRef = useSyncRef(workspacePath);
+  const treeRef = useSyncRef(tree);
 
   const {
     themeMode, hideLineNumbers, dailyNote, dailyNoteRef, treeSortOrder,
@@ -873,6 +874,20 @@ export default function App() {
     removeBookmarkPath,
     persistBookmarks,
   });
+
+  // Re-seed bookmarks when bookmarks.json changes on disk out from under us
+  // (sync pull, another machine, a hand edit). The main watcher ignores
+  // .shockwave/, so main emits a dedicated `bookmarks:changed`. Subscribe once
+  // per workspace; read the current tree via ref (no IPC) to prune dead paths.
+  useEffect(() => {
+    if (!workspacePath) return;
+    const unsub = window.api.bookmarks.onChanged(async () => {
+      const rels = await window.api.bookmarks.read(workspacePath);
+      const existing = new Set(flattenAll(treeRef.current).map((n) => n.id));
+      seedBookmarks(workspacePath, rels, existing);
+    });
+    return unsub;
+  }, [workspacePath, seedBookmarks, treeRef]);
 
   // ---- boot: load settings + subscribe to system theme ----
   useEffect(() => {

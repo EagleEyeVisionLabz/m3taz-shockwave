@@ -1163,6 +1163,7 @@ const WATCH_DEBOUNCE_MS = 150;
 const RENAME_GRACE_MS = 800;   // how long we hold an unlink waiting for a possible add to pair with
 
 let currentWatcher: any = null;
+let bookmarksWatcher: any = null;       // dedicated watcher for .shockwave/bookmarks.json (main watcher ignores .shockwave)
 let watcherRootDir: any = null;
 let watcherWindowId: any = null;
 let pendingByPath = new Map();    // path -> 'add' | 'change' | 'unlink'
@@ -1331,6 +1332,11 @@ async function stopWatcher() {
     currentWatcher = null;
     try { await w.close(); } catch { /* ignore close errors */ }
   }
+  if (bookmarksWatcher) {
+    const bw = bookmarksWatcher;
+    bookmarksWatcher = null;
+    try { await bw.close(); } catch { /* ignore close errors */ }
+  }
   correlator = null;
   watcherRootDir = null;
   watcherWindowId = null;
@@ -1362,6 +1368,20 @@ ipcMain.handle('fs:watchStart', async (evt, dirPath) => {
     .on('unlink', onChokidarUnlink)
     .on('addDir', () => { pendingTreeOnly = true; scheduleFlush(); })
     .on('unlinkDir', () => { pendingTreeOnly = true; scheduleFlush(); });
+
+  // The main watcher ignores everything under `.shockwave/`, so changes to the
+  // bookmarks file (sync pull, another machine, a hand edit) never reach the
+  // renderer. Watch that one file on its own and tell the renderer to re-read.
+  bookmarksWatcher = chokidar.watch(bookmarksPath(dirPath), {
+    ignoreInitial: true,
+    awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+    persistent: true,
+  });
+  const notifyBookmarks = () => {
+    const w = watcherWindowId != null ? BrowserWindow.fromId(watcherWindowId) : null;
+    if (w && !w.isDestroyed()) w.webContents.send('bookmarks:changed');
+  };
+  bookmarksWatcher.on('add', notifyBookmarks).on('change', notifyBookmarks);
 });
 
 ipcMain.handle('fs:watchStop', stopWatcher);
