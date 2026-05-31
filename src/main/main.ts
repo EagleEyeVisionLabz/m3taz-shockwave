@@ -655,7 +655,7 @@ ipcMain.handle('context:fileMenu', async (evt, opts = {}) => {
   // Conflict view, per file: accept as-edited, keep ours, or take remote.
   if (conflictMode) {
     return popupContextMenu(win, [
-      { label: 'Resolved conflict', value: FILE_ACTIONS.RESOLVE },
+      { label: 'Conflict resolved', value: FILE_ACTIONS.RESOLVE },
       { label: 'Keep our file', value: FILE_ACTIONS.KEEP },
       { label: 'Reset to remote', value: FILE_ACTIONS.RESET },
     ]);
