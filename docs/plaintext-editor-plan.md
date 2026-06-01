@@ -69,3 +69,52 @@ Should the two editors share a base, or be independent?
 - `src/renderer/MediaView.tsx` — the pattern to mirror.
 - `src/renderer/Editor.tsx` — the markdown editor; `~line 421` is the dark-rebuild pattern.
 - Memory: `sync-conflict-resolution-plan.md` lists this as a deferred item.
+
+---
+
+# Tabled: title-rename "type an extension" (plan B) — design, NOT built
+
+Tabled 2026-05-31. Coupled to the plain-text editor above (a non-`.md` file made
+via the title is only friendly if it opens cleanly — i.e. the plain-text editor
+exists first). Traced end to end; the linking layer needs **zero** changes.
+
+**Goal:** in the editor title bar — typing a name with **no extension** → `.md`
+(note default); typing a **recognized extension** → that file type, literal;
+typing `.md` → markdown (shown bare). Mirrors Obsidian's note-vs-file split.
+
+**Why plan B (recognized-extension list) over plan A (any trailing `.ext`):**
+dots are legal in note names/links (`[[My.Notes]]` resolves to `My.Notes.md`),
+so there's no clean "invalid name" signal. Plan A would mis-save `report.final`
+as a dead non-md file. Plan B biases to `.md` unless the extension is a *known*
+file type → a dot in a title can never accidentally kill a note. Cost: a new
+dedicated extension list (the existing 3 lists — MediaView image/video, FileTree
+image, chatAttachments text/MIME — are purpose-specific and shouldn't be merged).
+
+**End-to-end trace (what changes):**
+- **Display — already correct.** `titleFromActive` uses `prettyName`, which
+  strips only `.md` → md shows bare, non-md shows the full name. No change.
+- **Existing-file rename.** `onTitleCommit` (non-draft) calls `performRename`
+  (the `.md`-forcing path). Swap to the **literal rename in `onTreeRename`**
+  (extract it into one shared fn), fed `resolveTypedName(name)`. Reuses the file
+  browser's link transitions (md→md re-key+rewrite, md→non-md drop, non-md→md
+  add) verbatim — **no linking-layer change.** Collisions become reject+revert
+  (matches the tree + the title's existing `titleConflict` revert-on-blur).
+- **Conflict check.** Swap `titleConflict`'s `findNameConflict` (md-only) →
+  `findTreeRenameConflict` on `resolveTypedName(draft)`.
+- **New:** a recognized-extension list + `resolveTypedName(typed)` = ends in a
+  known ext → literal; else `${typed}.md`. (Apply the same naming transform
+  before the conflict check and the rename.)
+
+**The one open decision — drafts / new files:** the create-on-first-save path
+hard-forces `.md` in TWO places (the renderer passes `${name}.md`, and main's
+`fs:createFile` re-forces `.md`). So typing `data.json` to *rename an existing*
+file works, but as a *brand-new note's* title it'd still become `data.md`.
+- Option 1 (minimal, recommended): plan B for existing-file renames only; new
+  files stay `.md` (matches the agreed "new files default to `.md`"). Make a new
+  non-md file via create-then-rename, or the file browser (already literal).
+- Option 2 (fuller): honor extensions on new drafts too → add `fs:createFileLiteral`
+  and thread it through `writeNow`'s create path (delicate; touches drafts /
+  image-paste create-on-save).
+
+Lean: Option 1. Linking is untouched either way — it's purely a naming-step
+transform, since the link system keys only off the `.md` on disk.
