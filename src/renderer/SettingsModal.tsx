@@ -4,6 +4,7 @@ import { XIcon, CheckCircleIcon } from './Icons.jsx';
 import WorkspacesSection from './settings/WorkspacesSection.jsx';
 import AppearanceSection from './settings/AppearanceSection.jsx';
 import AgentChatSection from './settings/AgentChatSection.jsx';
+import BuiltinSkillsTab from './settings/BuiltinSkillsTab.jsx';
 import AiSkillsTab from './settings/AiSkillsTab.jsx';
 import WorkspaceSkillsTab from './settings/WorkspaceSkillsTab.jsx';
 import AgentSecretsSection from './settings/AgentSecretsSection.jsx';
@@ -23,6 +24,7 @@ const NAV = [
   { kind: 'item', id: SETTINGS_SECTIONS.TRANSCRIPTION, label: 'Transcription' },
   { kind: 'header', label: 'AI Agent' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_LLM, label: 'Agent Chat' },
+  { kind: 'item', id: SETTINGS_SECTIONS.AGENT_BUILTIN_SKILLS, label: 'Built-in Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SKILLS, label: 'Global Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_WORKSPACE_SKILLS, label: 'Workspace Skills' },
   { kind: 'item', id: SETTINGS_SECTIONS.AGENT_SECRETS, label: 'API Secrets' },
@@ -154,6 +156,12 @@ export default function SettingsModal({
               codingAgent={codingAgent}
               onCodingAgentChange={onCodingAgentChange}
             />
+          )}
+          {active === SETTINGS_SECTIONS.AGENT_BUILTIN_SKILLS && (
+            <div className="settings-section">
+              <h2 className="settings-section-title">Built-in Skills</h2>
+              <BuiltinSkillsTab skills={caSkills} onSkillsChange={onSkillsChange} />
+            </div>
           )}
           {active === SETTINGS_SECTIONS.AGENT_SKILLS && (
             <div className="settings-section">

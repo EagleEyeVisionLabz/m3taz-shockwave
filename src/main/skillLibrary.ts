@@ -13,8 +13,11 @@ export function agentDirFor(userDataDir) {
   return path.join(userDataDir, 'pi-agent');
 }
 
+// User-managed ("global") skills live here. Renamed from 'skill-library' →
+// 'global-skills' to mirror the bundled 'built-in-skills' scope. No migration:
+// any pre-rename data under the old name is simply not read.
 export function libraryDirFor(userDataDir) {
-  return path.join(agentDirFor(userDataDir), 'skill-library');
+  return path.join(agentDirFor(userDataDir), 'global-skills');
 }
 
 function piSettingsPath(userDataDir) {
@@ -43,7 +46,7 @@ function parseFrontmatter(text): any {
   return out;
 }
 
-async function readSkillFolder(folderPath) {
+async function readSkillFolder(folderPath, source) {
   const skillFile = path.join(folderPath, 'SKILL.md');
   let text;
   try {
@@ -52,33 +55,52 @@ async function readSkillFolder(folderPath) {
     return null;
   }
   const fm = parseFrontmatter(text);
+  // `required-secrets` (comma-separated) declares agent-secret names the skill
+  // needs. Shockwave auto-provisions an empty slot per name when the skill is
+  // enabled (see ensureBuiltinSecretSlots in main).
+  const requiredSecrets = String(fm['required-secrets'] || '')
+    .split(',').map((s) => s.trim()).filter(Boolean);
   return {
     folderName: path.basename(folderPath),
     path: folderPath,
     name: fm.name || path.basename(folderPath),
     description: fm.description || '',
     hasSkillMd: true,
+    source,
+    requiredSecrets,
   };
 }
 
-// Read the skill library; one entry per direct child folder. Folders without
-// a SKILL.md are surfaced with hasSkillMd:false so the UI can flag them.
-export async function listInstalled(userDataDir) {
-  const dir = libraryDirFor(userDataDir);
-  await ensureDirs(userDataDir);
-  const entries = await fs.readdir(dir, { withFileTypes: true });
+// Scan one skill dir; one entry per direct child folder, tagged with `source`.
+// Missing dir → []. Folders without SKILL.md surface with hasSkillMd:false so
+// the UI can flag them (only for the user-writable 'global' scope).
+async function scanSkillDir(dir, source) {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
   const out: any[] = [];
   for (const e of entries) {
     if (!e.isDirectory()) continue;
     if (e.name.startsWith('.')) continue;
     const full = path.join(dir, e.name);
-    const parsed = await readSkillFolder(full);
-    if (parsed) {
-      out.push(parsed);
-    } else {
-      out.push({ folderName: e.name, path: full, name: e.name, description: '', hasSkillMd: false });
-    }
+    const parsed = await readSkillFolder(full, source);
+    if (parsed) out.push(parsed);
+    else out.push({ folderName: e.name, path: full, name: e.name, description: '', hasSkillMd: false, source });
   }
+  return out;
+}
+
+// Read both skill scopes: bundled built-ins (read from `builtinDir`, omit for
+// none) and user-managed global skills (under userData). Each entry carries
+// `source: 'builtin' | 'global'`. Sorted by display name.
+export async function listInstalled(userDataDir, builtinDir?) {
+  await ensureDirs(userDataDir);
+  const out: any[] = [];
+  if (builtinDir) out.push(...await scanSkillDir(builtinDir, 'builtin'));
+  out.push(...await scanSkillDir(libraryDirFor(userDataDir), 'global'));
   out.sort((a, b) => a.name.localeCompare(b.name));
   return out;
 }
@@ -117,23 +139,34 @@ export async function removeSkill(userDataDir, folderName) {
 }
 
 // Compute the absolute paths pi should load for a given workspace.
-//   global[name]            = 'enabled' | 'disabled'
+//   builtin[name]           = 'enabled' | 'disabled'   (absent ⇒ enabled — default-on)
+//   global[name]            = 'enabled' | 'disabled'   (absent ⇒ disabled)
 //   workspaces[wsId][name]  = 'inherit' | 'enabled' | 'disabled'
-// Workspace override wins; 'inherit' (or missing) falls back to global.
+// Workspace override wins; 'inherit'/missing falls back to the per-scope default.
+// Cascade: if a built-in and a global skill share a folder name and both resolve
+// on, the GLOBAL one wins (lets a user override a built-in with their own upload).
 export function computeEffectivePaths(installed, skillsState, workspaceId) {
   const globalState = skillsState?.global ?? {};
+  const builtinState = skillsState?.builtin ?? {};
   const wsState = (workspaceId && skillsState?.workspaces?.[workspaceId]) || {};
-  const enabled: any[] = [];
+  const byName = new Map<string, any>(); // folderName(lower) → { path, source }
   for (const skill of installed) {
     if (!skill.hasSkillMd) continue;
+    const isBuiltin = skill.source === 'builtin';
     const wsValue = wsState[skill.folderName];
     let on;
     if (wsValue === 'enabled') on = true;
     else if (wsValue === 'disabled') on = false;
+    else if (isBuiltin) on = builtinState[skill.folderName] !== 'disabled'; // default-on
     else on = globalState[skill.folderName] === 'enabled';
-    if (on) enabled.push(skill.path);
+    if (!on) continue;
+    const key = skill.folderName.toLowerCase();
+    const existing = byName.get(key);
+    if (!existing || (existing.source === 'builtin' && !isBuiltin)) {
+      byName.set(key, { path: skill.path, source: skill.source });
+    }
   }
-  return enabled;
+  return [...byName.values()].map((v) => v.path);
 }
 
 // Write `skills: []` and `extensions: []` to <agentDir>/settings.json so pi

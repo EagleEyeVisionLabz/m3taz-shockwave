@@ -11,6 +11,7 @@ import { isMdFile, uniquePath, uniqueInWorkspace, walkMarkdownPaths, collectMark
 import { getProviders, getModels } from '@earendil-works/pi-ai';
 import { listInstalled, importFromPath, removeSkill, libraryDirFor } from './skillLibrary.js';
 import { installAgentTokensBridge } from './agentTokensExtension.js';
+import { ensureCliShims, prependPath } from './cliTools.js';
 import { DEFAULT_AGENT_SYSTEM_PROMPT } from './agentSystemPrompt.js';
 import {
   verifyPat as syncVerifyPat,
@@ -98,9 +99,10 @@ const DEFAULT_SETTINGS = {
     // Skill enable/disable state. Source of truth for what's actually loaded into
     // the pi session — the on-disk skill folder is the source of truth for what
     // EXISTS (read from pi-agent/skill-library/ at request time).
-    //   global[name]               = 'enabled' | 'disabled'
+    //   builtin[name]              = 'enabled' | 'disabled'   (absent ⇒ enabled)
+    //   global[name]               = 'enabled' | 'disabled'   (absent ⇒ disabled)
     //   workspaces[wsId][name]     = 'inherit' | 'enabled' | 'disabled'
-    skills: { global: {}, workspaces: {} },
+    skills: { builtin: {}, global: {}, workspaces: {} },
   },
   // Global, user-managed API tokens. Each entry: { name, description, token, createdAt, updatedAt }.
   // `name` is the unique identifier (case-insensitive). `token` is encrypted on disk
@@ -175,6 +177,51 @@ function settingsPath() {
   return path.join(app.getPath('userData'), 'settings.json');
 }
 
+// Bundled built-in skills. Shipped via electron-builder `extraResources` →
+// process.resourcesPath/built-in-skills in production; read from the repo in dev.
+function builtinSkillsDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'built-in-skills')
+    : path.join(app.getAppPath(), 'resources', 'built-in-skills');
+}
+
+// Bundled CLI tools. Shipped via `files` + `asarUnpack` → app.asar.unpacked in
+// production; read from the repo in dev.
+function cliToolsDir() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'app.asar.unpacked', 'cli-tools')
+    : path.join(app.getAppPath(), 'cli-tools');
+}
+
+// Auto-provision empty agent-secret slots for the secrets that enabled built-in
+// skills declare (SKILL.md `required-secrets`). The user just pastes their key
+// into the slot. Always re-adds a missing slot for an enabled built-in (so a
+// deleted one returns), but never overwrites a value the user already filled —
+// we only ADD names not already present. Disabling a built-in leaves its slot.
+async function ensureBuiltinSecretSlots() {
+  try {
+    const settings = await readSettings();
+    const installed = await listInstalled(app.getPath('userData'), builtinSkillsDir());
+    const builtinState = settings.codingAgent?.skills?.builtin ?? {};
+    const have = new Set((settings.agentSecrets ?? []).map((s) => s.name));
+    const additions: any[] = [];
+    const now = Date.now();
+    for (const sk of installed) {
+      if (sk.source !== 'builtin') continue;
+      if (builtinState[sk.folderName] === 'disabled') continue; // default-on
+      for (const name of (sk.requiredSecrets ?? [])) {
+        if (have.has(name) || additions.some((a) => a.name === name)) continue;
+        additions.push({ name, description: `Used by the ${sk.name} skill`, token: '', createdAt: now, updatedAt: now });
+      }
+    }
+    if (additions.length) {
+      await writeSettings({ agentSecrets: [...(settings.agentSecrets ?? []), ...additions] });
+    }
+  } catch (err: any) {
+    console.warn('[secrets] built-in slot provisioning failed:', err?.message ?? err);
+  }
+}
+
 async function readSettings() {
   try {
     const raw = await fs.readFile(settingsPath(), 'utf8');
@@ -188,6 +235,7 @@ async function readSettings() {
         ...DEFAULT_SETTINGS.codingAgent,
         ...(parsed.codingAgent ?? {}),
         skills: {
+          builtin: { ...(parsed.codingAgent?.skills?.builtin ?? {}) },
           global: { ...(parsed.codingAgent?.skills?.global ?? {}) },
           workspaces: { ...(parsed.codingAgent?.skills?.workspaces ?? {}) },
         },
@@ -1134,6 +1182,7 @@ ipcMain.handle('agent:send', async (evt, { text, images }) => {
         contextWindow,
         systemPrompt,
         userDataDir: app.getPath('userData'),
+        builtinDir: builtinSkillsDir(),
         skillsState: skills,
         workspaceId: ws?.id ?? null,
       },
@@ -1146,7 +1195,7 @@ ipcMain.handle('agent:send', async (evt, { text, images }) => {
 
 // ---- Skills ----
 ipcMain.handle('skills:list', async () => {
-  return listInstalled(app.getPath('userData'));
+  return listInstalled(app.getPath('userData'), builtinSkillsDir());
 });
 
 ipcMain.handle('skills:libraryDir', async () => {
@@ -1549,7 +1598,27 @@ installAgentTokensBridge(async () => {
   return settings.agentSecrets ?? [];
 });
 
-app.whenReady().then(() => {
+// Generate the CLI shims (firecrawl, playwright-cli) into <userData>/pi-agent/bin
+// and put that dir on PATH so the agent's bash can invoke them by name. Runs
+// every launch; failures are non-fatal (the agent simply won't find the CLIs).
+(async () => {
+  try {
+    const binDir = path.join(app.getPath('userData'), 'pi-agent', 'bin');
+    const { made } = await ensureCliShims({ cliToolsDir: cliToolsDir(), binDir, execPath: process.execPath });
+    prependPath(binDir);
+    // Playwright downloads its browser into a user-writable cache (no root). Point
+    // it at app userData so `playwright-cli install-browser` and `open` agree on
+    // location. Inherited by pi's bash → the shim's electron-as-node child. The
+    // browser is fetched lazily by the agent on first use (the skill instructs it),
+    // so users who never touch Playwright never pay the ~77 MB download.
+    process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(app.getPath('userData'), 'ms-playwright');
+    if (made.length) console.log('[cli-tools] shims ready on PATH:', made.join(', '));
+  } catch (err: any) {
+    console.warn('[cli-tools] shim setup failed:', err?.message ?? err);
+  }
+})();
+
+app.whenReady().then(async () => {
   protocol.handle('app', async (req) => {
     try {
       const url = new URL(req.url);
@@ -1574,6 +1643,9 @@ app.whenReady().then(() => {
       // ignore: icon file may not be present in some dev configurations
     }
   }
+  // Provision empty secret slots for enabled built-in skills BEFORE the window
+  // opens, so the renderer hydrates with them present (no clobber race).
+  await ensureBuiltinSecretSlots();
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

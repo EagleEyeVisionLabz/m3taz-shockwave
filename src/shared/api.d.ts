@@ -67,6 +67,11 @@ export interface InstalledSkill {
   folderName: string;
   name: string;
   description: string;
+  hasSkillMd?: boolean;
+  /** 'builtin' = bundled with the app; 'global' = user-imported. */
+  source?: 'builtin' | 'global';
+  /** Agent-secret names the skill declares (SKILL.md `required-secrets`). */
+  requiredSecrets?: string[];
 }
 
 /** Detaches a listener. Always call on unmount. */

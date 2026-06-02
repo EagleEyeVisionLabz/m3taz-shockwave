@@ -41,7 +41,7 @@ async function teardown() {
   }
 }
 
-async function ensureSession({ workspacePath, provider, model, apiKey, baseUrl, contextWindow, systemPrompt, userDataDir, skillsState, workspaceId }, emitEvent) {
+async function ensureSession({ workspacePath, provider, model, apiKey, baseUrl, contextWindow, systemPrompt, userDataDir, builtinDir, skillsState, workspaceId }, emitEvent) {
   const effectiveSystemPrompt = (systemPrompt ?? '').trim() || DEFAULT_AGENT_SYSTEM_PROMPT;
   const key = makeKey({ workspacePath, provider, model, apiKey, baseUrl, contextWindow, systemPrompt: effectiveSystemPrompt });
   // We always recompute the effective skill list before session create so the
@@ -49,7 +49,7 @@ async function ensureSession({ workspacePath, provider, model, apiKey, baseUrl, 
   // is already up but the skill set has changed, the user can hit Clear in the
   // chat sidebar to tear it down — pi reads `skills` only at session boot.
   await ensureDirs(userDataDir);
-  const installed = await listInstalled(userDataDir);
+  const installed = await listInstalled(userDataDir, builtinDir);
   const effectivePaths = computeEffectivePaths(installed, skillsState, workspaceId);
   // Materialize the agent-tokens extension every boot so it always reflects
   // the current source. Pi reads `extensions: []` from <agentDir>/settings.json

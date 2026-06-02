@@ -1,0 +1,10 @@
+{
+  "name": "shockwave-cli-tools",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bundled CLI tools the coding agent shells out to (firecrawl, playwright-cli). Run via the app's Electron binary as Node (ELECTRON_RUN_AS_NODE) through boot.js. node_modules is gitignored and populated by `npm install` here (wired into the root postinstall).",
+  "dependencies": {
+    "@playwright/cli": "0.1.13",
+    "firecrawl-cli": "1.19.0"
+  }
+}

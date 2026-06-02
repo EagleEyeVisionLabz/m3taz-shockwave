@@ -6,6 +6,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev --watch --remoteDebuggingPort=9222",
+    "postinstall": "npm --prefix cli-tools install --no-audit --no-fund",
     "build": "electron-vite build",
     "start": "electron-vite preview",
     "dist": "electron-vite build && electron-builder",
@@ -68,7 +69,17 @@
     },
     "files": [
       "out/**",
-      "build/icon.png"
+      "build/icon.png",
+      "cli-tools/**"
+    ],
+    "asarUnpack": [
+      "cli-tools/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/built-in-skills",
+        "to": "built-in-skills"
+      }
     ],
     "mac": {
       "target": "dmg",

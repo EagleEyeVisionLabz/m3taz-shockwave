@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { TrashIcon } from '../Icons.jsx';
 import ConfirmDialog from '../ConfirmDialog.jsx';
+import Dialog from '../Dialog.jsx';
 
 const GLOBAL_STATES = ['enabled', 'disabled'];
 
@@ -45,6 +46,7 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
   const [error, setError] = useState<any>(null);
   const [dragOver, setDragOver] = useState(false);
   const [confirmRemove, setConfirmRemove] = useState<any>(null);
+  const [addOpen, setAddOpen] = useState(false);
 
   // Async settings calls (reload, importPicker, importFromPath, remove) may
   // resolve after the modal closes. Gate all state updates on this so we
@@ -76,6 +78,9 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
     onSkillsChange({ ...skills, global: nextGlobal });
   }, [skills, globalState, onSkillsChange]);
 
+  // Built-in skills have their own settings screen; the global tab is user skills only.
+  const globals = installed.filter((s) => s.source !== 'builtin');
+
   // Wrap setError so post-await calls don't write to an unmounted component.
   const safeSetError = useCallback((msg) => {
     if (mountedRef.current) setError(msg);
@@ -89,6 +94,7 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
         const folderName = destPath.split(/[\\/]/).pop();
         onSkillsChange({ ...skills, global: { ...globalState, [folderName!]: 'enabled' } });
         await reload();
+        setAddOpen(false);
       }
     } catch (err: any) {
       safeSetError(err?.message ?? String(err));
@@ -140,6 +146,7 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
       for (const fn of importedFolders) nextGlobal[fn] = 'enabled';
       onSkillsChange({ ...skills, global: nextGlobal });
       await reload();
+      setAddOpen(false);
     }
   }, [reload, skills, globalState, onSkillsChange, safeSetError]);
 
@@ -150,29 +157,25 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
         default; per-workspace overrides live in the Workspace Skills tab.
       </p>
 
-      <h3 className="settings-subsection-title">Add a skill</h3>
-      <div
-        className={`skill-dropzone ${dragOver ? 'over' : ''}`}
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-      >
-        <span>Drop a skill folder here</span>
-        <button type="button" className="skill-dropzone-button" onClick={onImportClick}>
-          or choose a folder…
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <button
+          type="button"
+          className="workspace-add"
+          onClick={() => { setError(null); setAddOpen(true); }}
+        >
+          + Add Skills
         </button>
       </div>
 
       {error && <div className="skill-error">{error}</div>}
 
-      <h3 className="settings-subsection-title">Installed skills</h3>
       {loading ? (
         <div className="settings-empty">Loading…</div>
-      ) : installed.length === 0 ? (
-        <div className="settings-empty">No skills installed yet.</div>
+      ) : globals.length === 0 ? (
+        <div className="settings-empty">No skills added yet.</div>
       ) : (
         <ul className="skill-list">
-          {installed.map((skill) => {
+          {globals.map((skill) => {
             const gValue = globalState[skill.folderName] ?? 'disabled';
             return (
               <li key={skill.folderName} className={`skill-row ${skill.hasSkillMd ? '' : 'broken'}`}>
@@ -227,6 +230,26 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
         }}
         onClose={() => setConfirmRemove(null)}
       />
+
+      <Dialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="Add a skill"
+        footer={<button type="button" className="dialog-button" onClick={() => setAddOpen(false)}>Close</button>}
+      >
+        <div
+          className={`skill-dropzone ${dragOver ? 'over' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+        >
+          <span>Drop a skill folder here</span>
+          <button type="button" className="skill-dropzone-button" onClick={onImportClick}>
+            or choose a folder…
+          </button>
+        </div>
+        {error && <div className="skill-error">{error}</div>}
+      </Dialog>
     </div>
   );
 }

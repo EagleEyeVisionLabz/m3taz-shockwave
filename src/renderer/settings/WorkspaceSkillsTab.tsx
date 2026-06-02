@@ -70,6 +70,9 @@ export default function WorkspaceSkillsTab({ skills, onSkillsChange, workspaces,
   }, []);
 
   const globalState = skills?.global ?? {};
+  const builtinState = skills?.builtin ?? {};
+  const builtins = installed.filter((s) => s.source === 'builtin');
+  const globals = installed.filter((s) => s.source !== 'builtin');
   const wsOverrides = useMemo(() => (
     (selectedId && skills?.workspaces?.[selectedId]) || {}
   ), [skills, selectedId]);
@@ -119,43 +122,57 @@ export default function WorkspaceSkillsTab({ skills, onSkillsChange, workspaces,
 
       {error && <div className="skill-error">{error}</div>}
 
-      {!noWorkspaces && <h3 className="settings-subsection-title">Skills</h3>}
       {noWorkspaces ? null : loading ? (
         <div className="settings-empty">Loading…</div>
       ) : installed.length === 0 ? (
         <div className="settings-empty">No skills installed. Add some in the Global Skills tab.</div>
       ) : (
-        <ul className="skill-list">
-          {installed.map((skill) => {
-            const wValue = wsOverrides[skill.folderName] ?? 'inherit';
-            const inheritedFrom = globalState[skill.folderName] === 'enabled' ? 'enabled' : 'disabled';
-            return (
-              <li key={skill.folderName} className={`skill-row ${skill.hasSkillMd ? '' : 'broken'}`}>
-                <div className="skill-info">
-                  <div className="skill-name">
-                    {skill.name}
-                    {!skill.hasSkillMd && <span className="skill-broken-badge">no SKILL.md</span>}
-                  </div>
-                  {skill.description && (
-                    <div className="skill-description" title={skill.description}>
-                      {shortDescription(skill.description)}
-                    </div>
-                  )}
-                  <div className="skill-folder">Inherits global: {inheritedFrom}</div>
-                </div>
-                <div className="skill-controls">
-                  <StateButtons
-                    states={WORKSPACE_STATES}
-                    value={wValue}
-                    onChange={(v) => setOverride(skill.folderName, v)}
-                    ariaLabel={`Override for ${skill.name} in selected workspace`}
-                  />
-                </div>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          {renderSkillSection('Built-in', builtins, (s) => (
+            builtinState[s.folderName] !== 'disabled' ? 'enabled' : 'disabled'
+          ), wsOverrides, setOverride)}
+          {renderSkillSection('Global', globals, (s) => (
+            globalState[s.folderName] === 'enabled' ? 'enabled' : 'disabled'
+          ), wsOverrides, setOverride)}
+        </>
       )}
     </div>
+  );
+}
+
+// One titled section of override rows. `inheritedFor` maps a skill to its
+// effective default ('enabled'/'disabled') for the "Inherits: …" hint.
+function renderSkillSection(title, list, inheritedFor, wsOverrides, setOverride) {
+  if (!list || list.length === 0) return null;
+  return (
+    <>
+      <h3 className="settings-subsection-title">{title}</h3>
+      <ul className="skill-list">
+        {list.map((skill) => (
+          <li key={skill.folderName} className={`skill-row ${skill.hasSkillMd ? '' : 'broken'}`}>
+            <div className="skill-info">
+              <div className="skill-name">
+                {skill.name}
+                {!skill.hasSkillMd && <span className="skill-broken-badge">no SKILL.md</span>}
+              </div>
+              {skill.description && (
+                <div className="skill-description" title={skill.description}>
+                  {shortDescription(skill.description)}
+                </div>
+              )}
+              <div className="skill-folder">Inherits: {inheritedFor(skill)}</div>
+            </div>
+            <div className="skill-controls">
+              <StateButtons
+                states={WORKSPACE_STATES}
+                value={wsOverrides[skill.folderName] ?? 'inherit'}
+                onChange={(v) => setOverride(skill.folderName, v)}
+                ariaLabel={`Override for ${skill.name} in selected workspace`}
+              />
+            </div>
+          </li>
+        ))}
+      </ul>
+    </>
   );
 }

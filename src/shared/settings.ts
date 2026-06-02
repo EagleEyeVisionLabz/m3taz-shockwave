@@ -36,7 +36,11 @@ export interface CodingAgentSettings {
   contextWindow?: number;
   systemPrompt: string;
   skills: {
+    // Bundled built-in skills. Absent key ⇒ enabled (default-on). Read-only set.
+    builtin: Record<string, SkillState>;
+    // User-imported global skills. Absent key ⇒ disabled.
     global: Record<string, SkillState>;
+    // Per-workspace overrides over either scope, keyed by folder name.
     workspaces: Record<string, Record<string, WorkspaceSkillState>>;
   };
 }

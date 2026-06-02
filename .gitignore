@@ -3,3 +3,6 @@ dist/
 out/
 .DS_Store
 *.log
+cli-tools/node_modules/
+.playwright-cli/
+.firecrawl/

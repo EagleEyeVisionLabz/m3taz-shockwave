@@ -18,6 +18,7 @@ export const SETTINGS_SECTIONS = Object.freeze({
   SYNC: 'sync',
   TRANSCRIPTION: 'transcription',
   AGENT_LLM: 'agent-llm',
+  AGENT_BUILTIN_SKILLS: 'agent-builtin-skills',
   AGENT_SKILLS: 'agent-skills',
   AGENT_WORKSPACE_SKILLS: 'agent-workspace-skills',
   AGENT_SECRETS: 'agent-secrets',
