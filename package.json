@@ -70,7 +70,9 @@
     "files": [
       "out/**",
       "build/icon.png",
-      "cli-tools/**"
+      "cli-tools/**",
+      "!cli-tools/node_modules/.bin",
+      "!cli-tools/node_modules/.bin/**"
     ],
     "asarUnpack": [
       "cli-tools/**"
