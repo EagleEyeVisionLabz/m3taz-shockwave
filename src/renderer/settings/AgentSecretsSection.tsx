@@ -175,7 +175,6 @@ export default function AgentSecretsSection({ secrets, onChange }) {
         + Add secret
       </button>
 
-      <h3 className="settings-subsection-title">Saved secrets</h3>
       {(!secrets || secrets.length === 0) ? (
         <div className="settings-empty">No secrets yet.</div>
       ) : (
