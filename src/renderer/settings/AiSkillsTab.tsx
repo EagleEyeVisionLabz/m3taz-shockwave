@@ -189,7 +189,6 @@ export default function AiSkillsTab({ skills, onSkillsChange }) {
                       {shortDescription(skill.description)}
                     </div>
                   )}
-                  <div className="skill-folder">{skill.folderName}</div>
                 </div>
                 <div className="skill-controls">
                   <StateButtons
