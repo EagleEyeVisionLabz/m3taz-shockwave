@@ -1,7 +1,8 @@
-import React, { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import React, { createContext, forwardRef, memo, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { PaperclipIcon, PlayIcon, StopIcon, RotateCcwIcon, XIcon, FileTextIcon, MicIcon, PanelRightCloseIcon, CopyIcon, CheckIcon } from './Icons.jsx';
+import { resolveImageUrl } from './imageWidgets.js';
 import {
   classify,
   readAsBase64,
@@ -14,12 +15,32 @@ import {
 import { useVoiceInput } from './voice/useVoiceInput.js';
 import { VoiceBars } from './voice/VoiceBars.jsx';
 
-// Override <a> rendering in react-markdown so left-click on a link in an
-// assistant message opens the URL in the system browser instead of navigating
-// the renderer (which would blank the app — there's no chrome to navigate
-// back). Main also installs a will-navigate guard as a safety net, but this
-// is the UX-correct path. Exported as a module-level constant so the prop
-// reference is stable and MessageRow's memo isn't invalidated.
+// Workspace path available to MARKDOWN_COMPONENTS' `img` override via context,
+// so the module-level components object stays referentially stable (preserving
+// MessageRow's memo) while still resolving image src against the current
+// workspace.
+const ChatWorkspaceContext = createContext<string | null>(null);
+
+// Override link and image rendering in react-markdown:
+//
+// - <a>: left-click opens https? in the system browser instead of navigating
+//   the renderer (which would blank the app — no chrome to navigate back).
+//   Main also installs a will-navigate guard as a safety net, but this is the
+//   UX-correct path.
+//
+// - <img>: agents (playwright-cli screenshots, firecrawl page captures, etc.)
+//   emit markdown like `![alt](./example.png)` whose src is a workspace-relative
+//   path. React-markdown's default <img> would resolve that against the
+//   renderer URL (http://localhost:5173/example.png in dev, file:// in prod)
+//   and 404. Rewrite through `app://media/<rel>` — the same protocol the
+//   editor's image widgets use — by passing the workspace path as `activeDir`
+//   AND `vault` (the agent's cwd IS the workspace root, so plain relative
+//   paths and absolute paths under the workspace both resolve correctly).
+//   Outside-workspace or unresolvable paths fall back to alt text instead of
+//   a broken-image icon.
+//
+// Exported as a module-level constant so the prop reference is stable and
+// MessageRow's memo isn't invalidated.
 const MARKDOWN_COMPONENTS = {
   a: ({ href, children, ...rest }) => (
     <a
@@ -35,6 +56,12 @@ const MARKDOWN_COMPONENTS = {
       {children}
     </a>
   ),
+  img: ({ src, alt, ...rest }) => {
+    const ws = useContext(ChatWorkspaceContext);
+    const resolved = typeof src === 'string' ? resolveImageUrl(src, ws, ws) : null;
+    if (!resolved) return <>{alt || ''}</>;
+    return <img {...rest} src={resolved} alt={alt || ''} loading="lazy" />;
+  },
 };
 
 // Build a short, human-readable summary line for a tool call.
@@ -719,7 +746,9 @@ const ChatSidebar = forwardRef<any, any>(function ChatSidebar({ onClose, workspa
       </div>
 
       <div ref={scrollRef} className="chat-messages">
-        {messages.map((m) => <MessageRow key={m.id} message={m} />)}
+        <ChatWorkspaceContext.Provider value={workspacePath}>
+          {messages.map((m) => <MessageRow key={m.id} message={m} />)}
+        </ChatWorkspaceContext.Provider>
         {running && (
           <div className="chat-thinking">
             <svg

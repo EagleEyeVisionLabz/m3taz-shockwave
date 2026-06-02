@@ -106,7 +106,7 @@ function findWrappingLinkUrl(state, pos) {
 // Resolve a markdown image URL to a loadable src. Returns null when the path
 // resolves outside the vault — those stay as plain text rather than render
 // something the protocol handler will 403 anyway.
-function resolveImageUrl(raw, activeDir, vault) {
+export function resolveImageUrl(raw, activeDir, vault) {
   if (!raw) return null;
   const trimmed = raw.trim();
   if (/^(https?:|data:|app:|file:)/i.test(trimmed)) return trimmed;
