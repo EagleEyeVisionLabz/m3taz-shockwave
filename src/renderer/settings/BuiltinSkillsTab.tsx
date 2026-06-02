@@ -64,7 +64,7 @@ export default function BuiltinSkillsTab({ skills, onSkillsChange }) {
 
   return (
     <div>
-      <p className="settings-tab-intro">
+      <p className="settings-section-desc">
         Skills bundled with the app. Enabled by default — turn one off if you'd rather use your own
         version (add that in Global Skills). Built-in skills can't be deleted.
       </p>
