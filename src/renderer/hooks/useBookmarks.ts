@@ -46,13 +46,13 @@ interface UseBookmarksOpts {
 export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
   const [bookmarks, setBookmarks] = useState<Set<string>>(() => new Set());
   const bookmarksRef = useSyncRef(bookmarks);
-  const [bookmarkFilterActive, setBookmarkFilterActive] = useState(false);
 
-  // Clear in-memory state (called at the start of a workspace switch).
+  // Clear in-memory state (called at the start of a workspace switch). The
+  // bookmark-filter view mode is NOT reset here — it's persisted globally in
+  // useSettings so the view survives workspace switches and restarts.
   const resetBookmarks = useCallback(() => {
     setBookmarks(new Set());
     bookmarksRef.current = new Set();
-    setBookmarkFilterActive(false);
   }, [bookmarksRef]);
 
   const writeNames = useCallback((names: Set<string>) => {
@@ -151,8 +151,6 @@ export function useBookmarks({ workspacePath, showError }: UseBookmarksOpts) {
 
   return {
     bookmarks,
-    bookmarkFilterActive,
-    setBookmarkFilterActive,
     resetBookmarks,
     seedBookmarks,
     toggleBookmark,

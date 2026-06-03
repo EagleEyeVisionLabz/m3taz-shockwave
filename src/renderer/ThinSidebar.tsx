@@ -1,5 +1,5 @@
-import React from 'react';
-import { PageIcon, FolderIcon, GraphIcon, CalendarIcon } from './Icons.jsx';
+import React, { useEffect, useRef, useState } from 'react';
+import { PageIcon, FolderIcon, GraphIcon, CalendarIcon, TemplateIcon } from './Icons.jsx';
 
 export default function ThinSidebar({
   onNewFile,
@@ -8,6 +8,8 @@ export default function ThinSidebar({
   onJournalContextMenu,
   onToggleGraph,
   graphMode,
+  templates = [],
+  onPickTemplate,
   disabled,
 }) {
   // Day-of-month is read on render — no timer. The icon refreshes whenever the
@@ -15,6 +17,24 @@ export default function ThinSidebar({
   // app sits fully idle across midnight, the day stays stale until any
   // interaction triggers a render. Acceptable for a glyph.
   const todayDay = new Date().getDate();
+
+  const tplWrapRef = useRef<any>(null);
+  const [tplOpen, setTplOpen] = useState(false);
+
+  // Close the template popover on outside click / Escape.
+  useEffect(() => {
+    if (!tplOpen) return;
+    const onDown = (e) => {
+      if (tplWrapRef.current && !tplWrapRef.current.contains(e.target)) setTplOpen(false);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') setTplOpen(false); };
+    window.addEventListener('mousedown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('mousedown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [tplOpen]);
 
   return (
     <div className="thin-sidebar">
@@ -50,6 +70,41 @@ export default function ThinSidebar({
       >
         <FolderIcon />
       </button>
+      <div className="thin-sidebar-tpl" ref={tplWrapRef}>
+        <button
+          className={`thin-sidebar-btn ${tplOpen ? 'active' : ''}`}
+          onClick={() => setTplOpen((v) => !v)}
+          disabled={disabled}
+          title="Insert template"
+          aria-label="Insert template"
+          aria-haspopup="listbox"
+          aria-expanded={tplOpen}
+        >
+          <TemplateIcon />
+        </button>
+        {tplOpen && !disabled && (
+          <ul className="template-picker" role="listbox">
+            {templates.length === 0 ? (
+              <li className="template-picker-empty">No templates — set a folder in Settings → Templates</li>
+            ) : (
+              templates.map((t) => (
+                <li
+                  key={t.path}
+                  role="option"
+                  className="template-picker-item"
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    setTplOpen(false);
+                    onPickTemplate?.(t.path);
+                  }}
+                >
+                  {t.name}
+                </li>
+              ))
+            )}
+          </ul>
+        )}
+      </div>
       <button
         className={`thin-sidebar-btn ${graphMode ? 'active' : ''}`}
         onClick={onToggleGraph}

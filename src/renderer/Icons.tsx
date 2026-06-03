@@ -27,6 +27,17 @@ export function PageIcon({ size = 20 }) {
   );
 }
 
+// Double-document glyph for the template picker (two overlapping pages).
+export function TemplateIcon({ size = 20 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" {...stroke}>
+      <path d="M9 3h6l4 4v9a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <polyline points="15 3 15 7 19 7" />
+      <path d="M16 18v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1" />
+    </svg>
+  );
+}
+
 export function FolderIcon({ size = 20 }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" {...stroke}>

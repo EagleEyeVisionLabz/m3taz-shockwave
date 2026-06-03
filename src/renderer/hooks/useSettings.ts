@@ -4,6 +4,7 @@ import { THEME_MODES, VIEW_MODES, TREE_SORT_ORDERS, DEFAULT_PROVIDER_SLUG } from
 import type { Settings, ThemeMode, ViewMode, TreeSortOrder, CodingAgentSettings, AgentSecret } from '../../shared/settings';
 
 type DailyNote = Settings['dailyNote'];
+type Templates = Settings['templates'];
 type Transcription = Settings['transcription'];
 type SyncSettings = Settings['sync'];
 
@@ -12,8 +13,9 @@ type SyncSettings = Settings['sync'];
 const DEFAULT_CANONICAL: Settings = {
   workspaces: [],
   activeWorkspaceId: null,
-  appearance: { themeMode: THEME_MODES.SYSTEM, hideLineNumbers: false },
-  dailyNote: { format: 'YYYY-MM-DD', folder: '' },
+  appearance: { themeMode: THEME_MODES.SYSTEM, hideLineNumbers: false, dailyNotesInBookmarks: false },
+  dailyNote: { format: 'YYYY-MM-DD', folder: '', templatePath: '' },
+  templates: { folder: '' },
   codingAgent: { provider: DEFAULT_PROVIDER_SLUG, model: 'claude-sonnet-4-5', apiKey: '', baseUrl: '', systemPrompt: '', skills: { builtin: {}, global: {}, workspaces: {} } },
   agentSecrets: [],
   transcription: { provider: 'assemblyai', apiKey: '' },
@@ -23,6 +25,7 @@ const DEFAULT_CANONICAL: Settings = {
   sidebarWidth: 260,
   viewMode: VIEW_MODES.LIVE,
   treeSortOrder: TREE_SORT_ORDERS.NAME_ASC,
+  bookmarkFilterActive: false,
   windowBounds: null,
 };
 
@@ -40,8 +43,13 @@ interface UseSettingsOpts {
 export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
   const [themeMode, setThemeMode] = useState<ThemeMode>(THEME_MODES.SYSTEM);
   const [hideLineNumbers, setHideLineNumbers] = useState(false);
-  const [dailyNote, setDailyNote] = useState<DailyNote>({ format: 'YYYY-MM-DD', folder: '' });
+  const [dailyNotesInBookmarks, setDailyNotesInBookmarks] = useState(false);
+  // Live + persisted bookmark-filter mode (single source of truth; useBookmarks
+  // no longer owns this so the view can survive restarts / workspace switches).
+  const [bookmarkFilterActive, setBookmarkFilterActiveState] = useState(false);
+  const [dailyNote, setDailyNote] = useState<DailyNote>({ format: 'YYYY-MM-DD', folder: '', templatePath: '' });
   const dailyNoteRef = useSyncRef(dailyNote);
+  const [templates, setTemplates] = useState<Templates>({ folder: '' });
   const [treeSortOrder, setTreeSortOrder] = useState<TreeSortOrder>(TREE_SORT_ORDERS.NAME_ASC);
   const [codingAgentSettings, setCodingAgentSettings] = useState<CodingAgentSettings>(DEFAULT_CANONICAL.codingAgent);
   const [agentSecrets, setAgentSecrets] = useState<AgentSecret[]>([]);
@@ -71,9 +79,11 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
       await window.api.settings.write({
         workspaces: s.workspaces,
         activeWorkspaceId: s.activeWorkspaceId,
-        appearance: { themeMode: s.appearance.themeMode, hideLineNumbers: s.appearance.hideLineNumbers },
+        appearance: { themeMode: s.appearance.themeMode, hideLineNumbers: s.appearance.hideLineNumbers, dailyNotesInBookmarks: s.appearance.dailyNotesInBookmarks },
         dailyNote: s.dailyNote,
+        templates: s.templates,
         treeSortOrder: s.treeSortOrder,
+        bookmarkFilterActive: s.bookmarkFilterActive,
         codingAgent: s.codingAgent,
         agentSecrets: s.agentSecrets,
         transcription: s.transcription,
@@ -110,11 +120,28 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
     await persistSettings({ appearance: { ...settingsRef.current.appearance, hideLineNumbers: next } });
   }, [persistSettings]);
 
+  const onDailyNotesInBookmarksChange = useCallback(async (next: boolean) => {
+    setDailyNotesInBookmarks(next);
+    await persistSettings({ appearance: { ...settingsRef.current.appearance, dailyNotesInBookmarks: next } });
+  }, [persistSettings]);
+
+  // Toggle/persist the bookmark-filter view. Sets React state synchronously so
+  // the tree re-renders immediately; the write is fire-and-forget.
+  const onBookmarkFilterActiveChange = useCallback((next: boolean) => {
+    setBookmarkFilterActiveState(next);
+    persistSettings({ bookmarkFilterActive: next });
+  }, [persistSettings]);
+
   const onDailyNoteChange = useCallback(async (next: DailyNote) => {
     setDailyNote(next);
     dailyNoteRef.current = next;
     await persistSettings({ dailyNote: next });
   }, [persistSettings, dailyNoteRef]);
+
+  const onTemplatesChange = useCallback(async (next: Templates) => {
+    setTemplates(next);
+    await persistSettings({ templates: next });
+  }, [persistSettings]);
 
   const onTreeSortOrderChange = useCallback(async (next: TreeSortOrder) => {
     setTreeSortOrder(next);
@@ -164,7 +191,8 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
   // Seed everything from the on-disk settings object at boot, BEFORE any save can
   // fire (so an unchanged field isn't written as its default and clobbered).
   const hydrateSettings = useCallback((disk: any) => {
-    const dn: DailyNote = { format: disk.dailyNote?.format || 'YYYY-MM-DD', folder: disk.dailyNote?.folder ?? '' };
+    const dn: DailyNote = { format: disk.dailyNote?.format || 'YYYY-MM-DD', folder: disk.dailyNote?.folder ?? '', templatePath: disk.dailyNote?.templatePath ?? '' };
+    const tpl: Templates = { folder: disk.templates?.folder ?? '' };
     const tr: Transcription = { provider: disk.transcription?.provider || 'assemblyai', apiKey: disk.transcription?.apiKey || '' };
     const sy: SyncSettings = {
       pat: disk.sync?.pat || '',
@@ -173,6 +201,8 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
     };
     const tm: ThemeMode = disk.appearance?.themeMode || THEME_MODES.SYSTEM;
     const hln = !!disk.appearance?.hideLineNumbers;
+    const dnb = !!disk.appearance?.dailyNotesInBookmarks;
+    const bfa = !!disk.bookmarkFilterActive;
     const tso: TreeSortOrder = typeof disk.treeSortOrder === 'string' ? disk.treeSortOrder : TREE_SORT_ORDERS.NAME_ASC;
     const ca: CodingAgentSettings = disk.codingAgent ?? settingsRef.current.codingAgent;
     const secrets: AgentSecret[] = Array.isArray(disk.agentSecrets) ? disk.agentSecrets : [];
@@ -180,8 +210,9 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
     settingsRef.current = {
       workspaces: disk.workspaces || [],
       activeWorkspaceId: disk.activeWorkspaceId ?? null,
-      appearance: { themeMode: tm, hideLineNumbers: hln },
+      appearance: { themeMode: tm, hideLineNumbers: hln, dailyNotesInBookmarks: dnb },
       dailyNote: dn,
+      templates: tpl,
       codingAgent: ca,
       agentSecrets: secrets,
       transcription: tr,
@@ -191,12 +222,16 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
       sidebarWidth: typeof disk.sidebarWidth === 'number' ? disk.sidebarWidth : 260,
       viewMode: disk.viewMode === VIEW_MODES.RAW || disk.viewMode === VIEW_MODES.LIVE ? disk.viewMode : VIEW_MODES.LIVE,
       treeSortOrder: tso,
+      bookmarkFilterActive: bfa,
       windowBounds: disk.windowBounds ?? null,
     };
     setThemeMode(tm);
     setHideLineNumbers(hln);
+    setDailyNotesInBookmarks(dnb);
+    setBookmarkFilterActiveState(bfa);
     setDailyNote(dn);
     dailyNoteRef.current = dn;
+    setTemplates(tpl);
     setTreeSortOrder(tso);
     if (disk.codingAgent) setCodingAgentSettings(ca);
     if (Array.isArray(disk.agentSecrets)) setAgentSecrets(secrets);
@@ -205,10 +240,12 @@ export function useSettings({ activeWorkspacePath }: UseSettingsOpts) {
   }, [dailyNoteRef, syncRef]);
 
   return {
-    themeMode, hideLineNumbers, dailyNote, dailyNoteRef, treeSortOrder,
+    themeMode, hideLineNumbers, dailyNotesInBookmarks, bookmarkFilterActive,
+    dailyNote, dailyNoteRef, templates, treeSortOrder,
     codingAgentSettings, agentSecrets, transcription, sync, syncRef,
     settingsRef, saveStatus, persistSettings, hydrateSettings,
-    onThemeModeChange, onHideLineNumbersChange, onDailyNoteChange, onTreeSortOrderChange,
+    onThemeModeChange, onHideLineNumbersChange, onDailyNotesInBookmarksChange,
+    onBookmarkFilterActiveChange, onDailyNoteChange, onTemplatesChange, onTreeSortOrderChange,
     onCodingAgentChange, onAgentSecretsChange, onTranscriptionChange,
     onSyncChange, onSyncDisabledChange,
   };

@@ -116,31 +116,32 @@ export default function SortBar({
       >
         <SearchIcon size={16} />
       </button>
+      {/* Sort stays available in bookmark mode — the bookmark list is flat but
+          still honors the tree sort order. Collapse-all is folder-only, so it's
+          hidden when the list is flattened to bookmarks. */}
+      <button
+        type="button"
+        className="sort-bar-icon-btn"
+        onClick={() => setOpenMenu((m) => (m === 'sort' ? null : 'sort'))}
+        disabled={disabled}
+        title={`Sort: ${TREE_SORT_LABELS[value] || TREE_SORT_LABELS[TREE_SORT_ORDERS.NAME_ASC]}`}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Sort files"
+      >
+        <SortIcon size={16} />
+      </button>
       {!bookmarkFilterActive && (
-        <>
-          <button
-            type="button"
-            className="sort-bar-icon-btn"
-            onClick={() => setOpenMenu((m) => (m === 'sort' ? null : 'sort'))}
-            disabled={disabled}
-            title={`Sort: ${TREE_SORT_LABELS[value] || TREE_SORT_LABELS[TREE_SORT_ORDERS.NAME_ASC]}`}
-            aria-haspopup="listbox"
-            aria-expanded={open}
-            aria-label="Sort files"
-          >
-            <SortIcon size={16} />
-          </button>
-          <button
-            type="button"
-            className="sort-bar-icon-btn"
-            onClick={onCollapseAll}
-            disabled={disabled}
-            title="Collapse all"
-            aria-label="Collapse all folders"
-          >
-            <CollapseAllIcon size={16} />
-          </button>
-        </>
+        <button
+          type="button"
+          className="sort-bar-icon-btn"
+          onClick={onCollapseAll}
+          disabled={disabled}
+          title="Collapse all"
+          aria-label="Collapse all folders"
+        >
+          <CollapseAllIcon size={16} />
+        </button>
       )}
       {open && !disabled && (
         <ul className="sort-bar-menu" role="listbox">

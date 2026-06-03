@@ -64,8 +64,13 @@ export interface WindowBounds {
 export interface Settings {
   workspaces: WorkspaceEntry[];
   activeWorkspaceId: string | null;
-  appearance: { themeMode: ThemeMode; hideLineNumbers: boolean };
-  dailyNote: { format: string; folder: string };
+  appearance: { themeMode: ThemeMode; hideLineNumbers: boolean; dailyNotesInBookmarks: boolean };
+  // `templatePath` is the workspace-relative path of the template seeded into a
+  // newly-created daily note ('' = none).
+  dailyNote: { format: string; folder: string; templatePath: string };
+  // Template files: `folder` is the workspace-relative folder whose `.md` files
+  // are offered as templates ('' = templates disabled / none configured).
+  templates: { folder: string };
   codingAgent: CodingAgentSettings;
   agentSecrets: AgentSecret[];
   transcription: { provider: string; apiKey: string };
@@ -75,5 +80,8 @@ export interface Settings {
   sidebarWidth: number;
   viewMode: ViewMode;
   treeSortOrder: TreeSortOrder;
+  // Whether the file-tree is filtered to bookmarks only. Persisted globally so
+  // the view survives restarts and workspace switches.
+  bookmarkFilterActive: boolean;
   windowBounds: WindowBounds | null;
 }

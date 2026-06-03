@@ -14,9 +14,11 @@ export default function DailyNoteSection({
   onDailyNoteChange,
   tree,
   workspacePath,
+  templateOptions = [],
 }) {
   const format = dailyNote?.format || DEFAULT_DAILY_NOTE_FORMAT;
   const folder = dailyNote?.folder ?? '';
+  const templatePath = dailyNote?.templatePath ?? '';
 
   const isPreset = DAILY_NOTE_FORMAT_PRESETS.includes(format);
   const previewToday = useMemo(() => formatDailyNote(format), [format]);
@@ -113,6 +115,26 @@ export default function DailyNoteSection({
           tree={tree}
           workspacePath={workspacePath}
         />
+      </div>
+
+      <div className="settings-field-row">
+        <div className="settings-field-text">
+          <label className="settings-field-label" htmlFor="daily-note-template">Default template</label>
+          <div className="settings-field-help">
+            New daily notes start from this template. Configure the templates folder under Settings → Templates.
+          </div>
+        </div>
+        <select
+          id="daily-note-template"
+          className="settings-select"
+          value={templatePath}
+          onChange={(e) => onDailyNoteChange({ ...dailyNote, templatePath: e.target.value })}
+        >
+          <option value="">None</option>
+          {templateOptions.map((t) => (
+            <option key={t.value} value={t.value}>{t.name}</option>
+          ))}
+        </select>
       </div>
     </div>
   );

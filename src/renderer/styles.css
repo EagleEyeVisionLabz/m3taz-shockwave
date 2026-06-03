@@ -403,7 +403,7 @@ html, body, #root {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
 }
 
-.tree-wrap { flex: 1; min-height: 0; padding: 4px 0 8px; }
+.tree-wrap { flex: 1; min-height: 0; padding: 4px 0 8px; overflow-y: auto; }
 .tree-fill { width: 100%; height: 100%; }
 
 .tree-row {
@@ -3038,4 +3038,69 @@ html, body, #root {
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
+}
+
+/* Section headers above the flat lists shown in bookmark mode (Bookmarks, and
+   the optional Daily Notes below it). Aligned to the icon column (16px caret
+   margin + 18px caret = 34px), so the label sits slightly left of the file
+   names — like a section label above the rows. */
+.sidebar-list-header {
+  padding: 2px 8px 8px 34px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+}
+
+/* Daily Notes — listed inline below the bookmarks (flat) list. Rows reuse
+   `.tree-row` so they look/behave like the file browser above; react-arborist
+   zeroes the bookmark rows' left padding inline, so match that here for the file
+   names to line up exactly. margin-top separates the section from the bookmarks. */
+.daily-notes-section {
+  margin-top: 8px;
+}
+.daily-notes-section .tree-row {
+  padding-left: 0;
+}
+
+/* Template picker — popover anchored to the double-document button in the left
+   rail. Opens to the right of the rail (the rail is a narrow column). */
+.thin-sidebar-tpl {
+  position: relative;
+  display: flex;
+}
+.template-picker {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 4px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  min-width: 200px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-popover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: var(--shadow-popover);
+  z-index: 70;
+}
+.template-picker-item {
+  padding: 6px 8px;
+  font-size: 13px;
+  color: var(--fg-primary);
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.template-picker-item:hover { background: var(--bg-hover); }
+.template-picker-empty {
+  padding: 8px;
+  max-width: 220px;
+  font-size: 12px;
+  color: var(--fg-muted);
+  white-space: normal;
 }

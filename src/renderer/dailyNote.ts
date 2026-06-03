@@ -1,4 +1,8 @@
 import dayjs from 'dayjs';
+import customParseFormat from 'dayjs/plugin/customParseFormat';
+
+// Needed for strict-parsing a basename back into a date (parseDailyNoteDate).
+dayjs.extend(customParseFormat);
 
 // Format presets shown in the Daily Note settings dropdown. The 4th entry is
 // path-style — the "/" in the format becomes a folder separator on disk so
@@ -35,6 +39,18 @@ export function formatDailyNote(format: string, date: Date = new Date()): string
 //   dir      — absolute folder the file should live in
 //   name     — basename (no .md)
 //   absPath  — `${dir}/${name}.md`
+// Strict-parse a workspace-relative path (no `.md`, forward slashes) against the
+// daily-note `format`. Returns the parsed Date if it matches cleanly, else null.
+// Used to detect which files inside the daily-note folder are daily notes —
+// slashes in the format are folder boundaries, so `relPathNoExt` includes any
+// subdirs (e.g. '2026/06/02' against 'YYYY/MM/DD'). Strict mode rejects anything
+// that isn't an exact format match, so non-daily files are filtered out.
+export function parseDailyNoteDate(relPathNoExt: string, format: string): Date | null {
+  if (!relPathNoExt || !format) return null;
+  const m = dayjs(relPathNoExt, format, true);
+  return m.isValid() ? m.toDate() : null;
+}
+
 export function resolveDailyNotePath(workspacePath: string, folder: string, formatted: string): { dir: string; name: string; absPath: string } {
   const cleanFolder = (folder ?? '').replace(/^\/+|\/+$/g, '');
   const segments = formatted.split('/').filter(Boolean);

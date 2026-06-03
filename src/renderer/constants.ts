@@ -15,6 +15,7 @@ export const SETTINGS_SECTIONS = Object.freeze({
   APPEARANCE: 'appearance',
   WORKSPACES: 'workspaces',
   DAILY_NOTE: 'daily-note',
+  TEMPLATES: 'templates',
   SYNC: 'sync',
   TRANSCRIPTION: 'transcription',
   UPDATES: 'updates',

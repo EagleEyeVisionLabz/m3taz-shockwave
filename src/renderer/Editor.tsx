@@ -293,6 +293,20 @@ const Editor = forwardRef<any, any>(function Editor(
       view.dispatch({ effects: cmp.reconfigure(EditorState.readOnly.of(!!ro)) });
     },
     focus: () => { viewRef.current?.focus(); },
+    // Insert text at the current cursor (replacing any selection). NOT marked
+    // programmatic, so it flows through the updateListener → onChange → dirty →
+    // autosave path, exactly like typing. Used by the template picker.
+    insertAtCursor: (text) => {
+      const view = viewRef.current;
+      if (!view) return;
+      const sel = view.state.selection.main;
+      view.dispatch({
+        changes: { from: sel.from, to: sel.to, insert: text },
+        selection: { anchor: sel.from + text.length },
+        scrollIntoView: true,
+      });
+      view.focus();
+    },
   }), []);
 
   useEffect(() => {

@@ -9,6 +9,7 @@ import AiSkillsTab from './settings/AiSkillsTab.jsx';
 import WorkspaceSkillsTab from './settings/WorkspaceSkillsTab.jsx';
 import AgentSecretsSection from './settings/AgentSecretsSection.jsx';
 import DailyNoteSection from './settings/DailyNoteSection.jsx';
+import TemplatesSection from './settings/TemplatesSection.jsx';
 import TranscriptionSection from './settings/TranscriptionSection.jsx';
 import SyncSection from './settings/SyncSection.jsx';
 import UpdatesSection from './settings/UpdatesSection.jsx';
@@ -21,6 +22,7 @@ const NAV = [
   { kind: 'item', id: SETTINGS_SECTIONS.APPEARANCE, label: 'Appearance' },
   { kind: 'item', id: SETTINGS_SECTIONS.WORKSPACES, label: 'Workspaces' },
   { kind: 'item', id: SETTINGS_SECTIONS.DAILY_NOTE, label: 'Daily Notes' },
+  { kind: 'item', id: SETTINGS_SECTIONS.TEMPLATES, label: 'Templates' },
   { kind: 'item', id: SETTINGS_SECTIONS.SYNC, label: 'GitHub Sync' },
   { kind: 'item', id: SETTINGS_SECTIONS.TRANSCRIPTION, label: 'Transcription' },
   { kind: 'item', id: SETTINGS_SECTIONS.UPDATES, label: 'Updates' },
@@ -46,8 +48,13 @@ export default function SettingsModal({
   onThemeModeChange,
   hideLineNumbers,
   onHideLineNumbersChange,
+  dailyNotesInBookmarks,
+  onDailyNotesInBookmarksChange,
   dailyNote,
   onDailyNoteChange,
+  templates,
+  onTemplatesChange,
+  templateOptions,
   tree,
   workspacePath,
   codingAgent,
@@ -119,6 +126,8 @@ export default function SettingsModal({
               onThemeModeChange={onThemeModeChange}
               hideLineNumbers={hideLineNumbers}
               onHideLineNumbersChange={onHideLineNumbersChange}
+              dailyNotesInBookmarks={dailyNotesInBookmarks}
+              onDailyNotesInBookmarksChange={onDailyNotesInBookmarksChange}
             />
           )}
           {active === SETTINGS_SECTIONS.WORKSPACES && (
@@ -138,6 +147,15 @@ export default function SettingsModal({
             <DailyNoteSection
               dailyNote={dailyNote}
               onDailyNoteChange={onDailyNoteChange}
+              tree={tree}
+              workspacePath={workspacePath}
+              templateOptions={templateOptions}
+            />
+          )}
+          {active === SETTINGS_SECTIONS.TEMPLATES && (
+            <TemplatesSection
+              templates={templates}
+              onTemplatesChange={onTemplatesChange}
               tree={tree}
               workspacePath={workspacePath}
             />

@@ -5,6 +5,9 @@ import { formatDailyNote, resolveDailyNotePath } from '../dailyNote.js';
 interface DailyNoteConfig {
   format: string;
   folder: string;
+  // Workspace-relative path of the template seeded into a new daily note
+  // ('' = none).
+  templatePath: string;
 }
 
 interface UseDailyNoteOpts {
@@ -57,9 +60,19 @@ export function useDailyNote({
         await openInActiveTab(existing);
         return;
       }
+      // Seed a new daily note with the configured default template, if any.
+      let initial = '';
+      if (dn.templatePath) {
+        try {
+          initial = await window.api.readFile(`${workspacePath}/${dn.templatePath}`);
+        } catch {
+          // Template missing/unreadable — fall back to an empty note.
+          initial = '';
+        }
+      }
       await window.api.ensureDir(dir);
-      const { path: newPath, mtime } = await window.api.createFile(dir, `${name}.md`, '');
-      linkIndex.updateFile(newPath, '', mtime);
+      const { path: newPath, mtime } = await window.api.createFile(dir, `${name}.md`, initial);
+      linkIndex.updateFile(newPath, initial, mtime);
       await fileOps.treeAndIndexChanged();
       await openInActiveTab(newPath);
     } catch (err: any) {

@@ -4,7 +4,7 @@ import { FILE_ACTIONS } from './constants.js';
 import { SIDEBAR_IMAGE_MIME } from './imagePaste.js';
 
 const FileTree = forwardRef<any, any>(function FileTree(
-  { data, onSelect, onRename, onFileAction, onFolderAction, onMoveItems, disableDrop, getIsBookmarked, conflictMode, checkRenameConflict, onRootContextMenu },
+  { data, onSelect, onRename, onFileAction, onFolderAction, onMoveItems, disableDrop, getIsBookmarked, conflictMode, checkRenameConflict, onRootContextMenu, fixedHeight },
   ref,
 ) {
   const wrapRef = useRef<any>(null);
@@ -45,6 +45,11 @@ const FileTree = forwardRef<any, any>(function FileTree(
     <div
       ref={wrapRef}
       className="tree-fill"
+      // In bookmark mode the parent sizes the tree to its content (fixedHeight)
+      // and owns the scroll, so the daily-notes list can sit directly beneath it
+      // and scroll as one. Otherwise the tree fills its container and scrolls
+      // internally (ResizeObserver-driven height).
+      style={fixedHeight != null ? { height: fixedHeight, flex: '0 0 auto' } : undefined}
       onContextMenu={(e) => {
         // Row Nodes stopPropagation on their own onContextMenu, so this only
         // fires on empty space below/around the tree rows.
@@ -64,7 +69,7 @@ const FileTree = forwardRef<any, any>(function FileTree(
           // Tree in, so it's non-null here.
           dndRootElement={wrapRef.current}
           width={size.width}
-          height={size.height}
+          height={fixedHeight != null ? fixedHeight : size.height}
           indent={16}
           rowHeight={24}
           onSelect={onSelect}

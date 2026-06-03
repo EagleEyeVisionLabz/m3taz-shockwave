@@ -12,6 +12,8 @@ export default function AppearanceSection({
   onThemeModeChange,
   hideLineNumbers,
   onHideLineNumbersChange,
+  dailyNotesInBookmarks,
+  onDailyNotesInBookmarksChange,
 }) {
   return (
     <div className="settings-section">
@@ -41,6 +43,20 @@ export default function AppearanceSection({
           />
           <span>Hide line numbers in editor</span>
         </label>
+      </div>
+
+      <div className="settings-field">
+        <label className="settings-checkbox-row">
+          <input
+            type="checkbox"
+            checked={!!dailyNotesInBookmarks}
+            onChange={(e) => onDailyNotesInBookmarksChange?.(e.target.checked)}
+          />
+          <span>Show daily notes below bookmarks</span>
+        </label>
+        <p className="settings-field-hint">
+          When the file tree is filtered to bookmarks, list your daily notes underneath so you can jump between them without leaving the bookmarks view.
+        </p>
       </div>
     </div>
   );

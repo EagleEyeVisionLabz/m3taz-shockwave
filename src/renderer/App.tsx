@@ -23,6 +23,9 @@ import { basenameOf, dirOf, toRelPath } from './pathUtils';
 import { prettyName } from './linkIndex.js';
 import { SETTINGS_SECTIONS, THEME_MODES, APP_NAME, FOLDER_ACTIONS, VIEW_MODES, SAVE_STATES, TREE_SORT_ORDERS, FILE_ACTIONS } from './constants.js';
 import SortBar from './SortBar.jsx';
+import DailyNotesPanel from './DailyNotesPanel.jsx';
+import { parseDailyNoteDate } from './dailyNote.js';
+import { collectTemplateFiles } from './templates.js';
 import { useLinkIndex } from './hooks/useLinkIndex.js';
 import { useTabs } from './hooks/useTabs.js';
 import { useFileOps } from './hooks/useFileOps.js';
@@ -211,10 +214,12 @@ export default function App() {
   useEffect(() => { if (!hasConflicts) setConflictFilterActive(false); }, [hasConflicts]);
 
   const {
-    themeMode, hideLineNumbers, dailyNote, dailyNoteRef, treeSortOrder,
+    themeMode, hideLineNumbers, dailyNotesInBookmarks, bookmarkFilterActive,
+    dailyNote, dailyNoteRef, templates, treeSortOrder,
     codingAgentSettings, agentSecrets, transcription, sync, syncRef,
     saveStatus, persistSettings, hydrateSettings,
-    onThemeModeChange, onHideLineNumbersChange, onDailyNoteChange, onTreeSortOrderChange,
+    onThemeModeChange, onHideLineNumbersChange, onDailyNotesInBookmarksChange,
+    onBookmarkFilterActiveChange, onDailyNoteChange, onTemplatesChange, onTreeSortOrderChange,
     onCodingAgentChange, onAgentSecretsChange, onTranscriptionChange,
     onSyncChange, onSyncDisabledChange,
   } = useSettings({ activeWorkspacePath: workspacePath });
@@ -313,8 +318,6 @@ export default function App() {
 
   const {
     bookmarks,
-    bookmarkFilterActive,
-    setBookmarkFilterActive,
     resetBookmarks,
     seedBookmarks,
     toggleBookmark,
@@ -339,6 +342,36 @@ export default function App() {
     const base = bookmarkFilterActive ? flattenBookmarkedFiles(tree, bookmarks) : tree;
     return sortTreeNodes(base, treeSortOrder);
   }, [tree, treeSortOrder, bookmarkFilterActive, bookmarks, conflictFilterActive, conflictPaths, workspacePath]);
+
+  // Daily-note files for the panel below the bookmarks list. Only computed when
+  // the panel is actually shown (bookmark mode + Appearance toggle on). Matches
+  // every `.md` under the configured daily-note folder whose path (relative to
+  // that folder, minus `.md`) strict-parses against the daily-note format.
+  // Sorted by the active tree sort order, same as the bookmarks list above it.
+  const dailyNoteFiles = useMemo(() => {
+    if (!bookmarkFilterActive || !dailyNotesInBookmarks || !workspacePath) return [];
+    const cleanFolder = (dailyNote.folder ?? '').replace(/^\/+|\/+$/g, '');
+    const prefix = cleanFolder ? `${workspacePath}/${cleanFolder}/` : `${workspacePath}/`;
+    const out: any[] = [];
+    for (const n of flattenAll(tree)) {
+      if (n.children || !/\.md$/i.test(n.id) || !n.id.startsWith(prefix)) continue;
+      const relNoExt = n.id.slice(prefix.length).replace(/\.md$/i, '');
+      if (parseDailyNoteDate(relNoExt, dailyNote.format)) out.push(n);
+    }
+    return sortTreeNodes(out, treeSortOrder);
+  }, [bookmarkFilterActive, dailyNotesInBookmarks, workspacePath, tree, dailyNote.format, dailyNote.folder, treeSortOrder]);
+
+  // Template files (direct `.md` children of the configured templates folder),
+  // alphabetical. Drives both the left-rail picker and the Daily Note default-
+  // template dropdown.
+  const templateFiles = useMemo(
+    () => collectTemplateFiles(tree, templates.folder, workspacePath),
+    [tree, templates.folder, workspacePath],
+  );
+  const templateOptions = useMemo(
+    () => templateFiles.map((t) => ({ name: t.name, value: t.relPath })),
+    [templateFiles],
+  );
 
   // ---- editor ref ----
   const editorRef = useRef<any>(null);
@@ -805,6 +838,39 @@ export default function App() {
     await addDraftTab();
   }, [workspacePath, addDraftTab]);
 
+  // ---- templates ----
+  // Holds template content destined for a freshly-opened draft; the editor
+  // load effect (which owns a draft's initial buffer) consumes it. See below.
+  const pendingTemplateRef = useRef<string | null>(null);
+
+  // Insert a template (by absolute path) into the active editor, or — when no
+  // editable doc is open — into a new draft. The draft/dirty/autosave path then
+  // creates the file, exactly like typing or dropping an image into a draft.
+  const applyTemplate = useCallback(async (absPath) => {
+    if (!workspacePath || !absPath) return;
+    let content: string;
+    try {
+      content = await window.api.readFile(absPath);
+    } catch (err: any) {
+      showError(err.message ?? String(err));
+      return;
+    }
+    if (graphMode) setGraphMode(false);
+    const hasEditableTab = !!activeTab && !activeMediaKind;
+    if (hasEditableTab) {
+      // Editor may be remounting if we just left graph mode — wait for the ref.
+      const tryInsert = (attempt = 0) => {
+        const ed = editorRef.current;
+        if (ed) { ed.insertAtCursor(content); return; }
+        if (attempt < 30) requestAnimationFrame(() => tryInsert(attempt + 1));
+      };
+      tryInsert();
+    } else {
+      pendingTemplateRef.current = content;
+      await addDraftTab();
+    }
+  }, [workspacePath, graphMode, activeTab, activeMediaKind, addDraftTab, showError]);
+
   // ---- create a folder + put it into rename mode ----
   const createFolderAt = useCallback(async (dirPath) => {
     try {
@@ -1197,7 +1263,22 @@ export default function App() {
     if (!editor) return;
     const last = lastLoadRef.current;
     if (activeIsDraft || !activeFile) {
-      editor.setContent('', null);
+      const pendingTpl = pendingTemplateRef.current;
+      if (pendingTpl != null) {
+        pendingTemplateRef.current = null;
+        editor.setContent(pendingTpl, null);
+        // Mark the draft dirty so the debounced writeNow creates the file —
+        // same path as typing / image drop into a draft. Done via stable refs
+        // (NOT onEditorChange) so this effect's dep array stays stable; adding
+        // the recreated-every-render onEditorChange here caused an infinite
+        // setContent→render→effect loop.
+        setSaveState(SAVE_STATES.UNSAVED);
+        dirtyTabIdRef.current = activeTabId;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => writeNowRef.current(), SAVE_DEBOUNCE_MS);
+      } else {
+        editor.setContent('', null);
+      }
       lastLoadRef.current = { tabId: activeTabId, path: null, isDark };
       return;
     }
@@ -1343,6 +1424,8 @@ export default function App() {
         onJournalContextMenu={(x, y) => setJournalPickerAnchor({ x, y })}
         onToggleGraph={onToggleGraph}
         graphMode={graphMode}
+        templates={templateFiles}
+        onPickTemplate={applyTemplate}
         disabled={!workspacePath}
       />
       <QuickSearch
@@ -1374,7 +1457,7 @@ export default function App() {
           onOpenQuickSearch={() => setQuickSearchOpen(true)}
           onCollapseAll={() => fileTreeRef.current?.closeAll?.()}
           bookmarkFilterActive={bookmarkFilterActive}
-          onToggleBookmarkFilter={() => { setConflictFilterActive(false); setBookmarkFilterActive((v) => !v); }}
+          onToggleBookmarkFilter={() => { setConflictFilterActive(false); onBookmarkFilterActiveChange(!bookmarkFilterActive); }}
           bookmarkItems={bookmarkItems}
           onPickBookmark={async (path) => {
             if (graphMode) setGraphMode(false);
@@ -1383,11 +1466,14 @@ export default function App() {
           hasConflicts={hasConflicts}
           conflictCount={conflictPaths.length}
           conflictFilterActive={conflictFilterActive}
-          onToggleConflictFilter={() => { setBookmarkFilterActive(false); setConflictFilterActive((v) => !v); }}
+          onToggleConflictFilter={() => { onBookmarkFilterActiveChange(false); setConflictFilterActive((v) => !v); }}
           onConflictCloudMenu={onConflictCloudMenu}
           disabled={!workspacePath}
         />
         <div className="tree-wrap">
+          {bookmarkFilterActive && sortedTree.length > 0 && (
+            <div className="sidebar-list-header">Bookmarks</div>
+          )}
           {sortedTree.length > 0 ? (
             <FileTree
               ref={fileTreeRef}
@@ -1402,6 +1488,10 @@ export default function App() {
               checkRenameConflict={(name, id) => findTreeRenameConflict({ tree, currentPath: id, newName: name })}
               getIsBookmarked={isBookmarked}
               onRootContextMenu={onRootContextMenu}
+              // In bookmark mode the list is flat; size the tree to its content
+              // (rowHeight=24, matching FileTree) so the daily-notes list can sit
+              // directly beneath it and tree-wrap scrolls them as one.
+              fixedHeight={bookmarkFilterActive ? sortedTree.length * 24 : undefined}
             />
           ) : (
             <div
@@ -1420,6 +1510,16 @@ export default function App() {
                     ? 'No bookmarks'
                     : 'Empty workspace'}
             </div>
+          )}
+          {bookmarkFilterActive && dailyNotesInBookmarks && (
+            <DailyNotesPanel
+              items={dailyNoteFiles}
+              activePath={activeFile}
+              onOpen={async (path) => {
+                if (graphMode) setGraphMode(false);
+                await openInActiveTab(path);
+              }}
+            />
           )}
         </div>
         <WorkspaceSelector
@@ -1547,7 +1647,7 @@ export default function App() {
                 onUndo={onUndo}
                 onRedo={onRedo}
                 syncStatus={syncStatus}
-                onOpenConflicts={() => { setBookmarkFilterActive(false); setConflictFilterActive(true); }}
+                onOpenConflicts={() => { onBookmarkFilterActiveChange(false); setConflictFilterActive(true); }}
                 onEnableSync={() => {
                   if (!workspacePath) return;
                   window.api.sync.setWorkspaceDisabled({ workspacePath, disabled: false })
@@ -1694,8 +1794,13 @@ export default function App() {
           onThemeModeChange={onThemeModeChange}
           hideLineNumbers={hideLineNumbers}
           onHideLineNumbersChange={onHideLineNumbersChange}
+          dailyNotesInBookmarks={dailyNotesInBookmarks}
+          onDailyNotesInBookmarksChange={onDailyNotesInBookmarksChange}
           dailyNote={dailyNote}
           onDailyNoteChange={onDailyNoteChange}
+          templates={templates}
+          onTemplatesChange={onTemplatesChange}
+          templateOptions={templateOptions}
           tree={tree}
           workspacePath={workspacePath}
           codingAgent={codingAgentSettings}

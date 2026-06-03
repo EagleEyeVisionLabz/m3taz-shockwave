@@ -82,11 +82,14 @@ function popupContextMenu(win, template) {
 const DEFAULT_SETTINGS = {
   workspaces: [],
   activeWorkspaceId: null,
-  appearance: { themeMode: 'system', hideLineNumbers: false },
+  appearance: { themeMode: 'system', hideLineNumbers: false, dailyNotesInBookmarks: false },
   // Daily-note settings. `format` is a dayjs format string (Obsidian-style).
   // It may contain "/" — those become folder boundaries beneath `folder`.
   // `folder` is a workspace-relative path ('' or '/' = workspace root).
-  dailyNote: { format: 'YYYY-MM-DD', folder: '' },
+  dailyNote: { format: 'YYYY-MM-DD', folder: '', templatePath: '' },
+  // Template library. `folder` is a workspace-relative folder; its `.md` files
+  // are offered in the template picker. '' = no templates configured.
+  templates: { folder: '' },
   codingAgent: {
     provider: 'anthropic',
     model: 'claude-sonnet-4-5',
@@ -129,6 +132,9 @@ const DEFAULT_SETTINGS = {
   // 'modified-asc' | 'created-desc' | 'created-asc'. Folders are always pinned
   // to the top in A→Z order; this setting only re-orders files.
   treeSortOrder: 'name-asc',
+  // Whether the file-tree is filtered to bookmarks only. Persisted globally so
+  // the view survives restarts and workspace switches.
+  bookmarkFilterActive: false,
   // Window bounds. `null` until the user resizes/moves at least once. Stored
   // as `{ x, y, width, height, maximized }`. On restore we validate against
   // currently-attached displays and fall back to a centered 1200×800 if the
@@ -231,6 +237,7 @@ async function readSettings() {
       ...parsed,
       appearance: { ...DEFAULT_SETTINGS.appearance, ...(parsed.appearance ?? {}) },
       dailyNote: { ...DEFAULT_SETTINGS.dailyNote, ...(parsed.dailyNote ?? {}) },
+      templates: { ...DEFAULT_SETTINGS.templates, ...(parsed.templates ?? {}) },
       codingAgent: {
         ...DEFAULT_SETTINGS.codingAgent,
         ...(parsed.codingAgent ?? {}),
