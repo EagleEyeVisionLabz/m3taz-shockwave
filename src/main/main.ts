@@ -629,45 +629,15 @@ ipcMain.handle('fs:duplicateFile', async (_evt, filePath) => {
   return target;
 });
 
-ipcMain.handle('fs:trashFolder', async (evt, folderPath) => {
-  const win = BrowserWindow.fromWebContents(evt.sender);
-  const name = path.basename(folderPath);
-  let entries: any[] = [];
-  try {
-    entries = (await fs.readdir(folderPath)).filter((n) => !n.startsWith('.'));
-  } catch {
-    entries = [];
-  }
-  const isEmpty = entries.length === 0;
-  const result = await dialog.showMessageBox(win as any, {
-    type: 'warning',
-    title: 'Delete folder',
-    message: `Delete "${name}"?`,
-    detail: isEmpty
-      ? 'The folder will be moved to the Trash.'
-      : `"${name}" contains items. Everything inside will be moved to the Trash.`,
-    buttons: ['Cancel', 'Delete'],
-    defaultId: 0,
-    cancelId: 0,
-  });
-  if (result.response !== 1) return false;
+// Confirmation lives in the renderer (ConfirmDialog), same as bulk delete —
+// these just move the item to the Trash. Return true so existing callers that
+// gate cleanup on the result keep working.
+ipcMain.handle('fs:trashFolder', async (_evt, folderPath) => {
   await shell.trashItem(folderPath);
   return true;
 });
 
-ipcMain.handle('fs:trashFile', async (evt, filePath) => {
-  const win = BrowserWindow.fromWebContents(evt.sender);
-  const name = path.basename(filePath);
-  const result = await dialog.showMessageBox(win as any, {
-    type: 'warning',
-    title: 'Delete file',
-    message: `Delete "${name}"?`,
-    detail: 'The file will be moved to the Trash.',
-    buttons: ['Cancel', 'Delete'],
-    defaultId: 0,
-    cancelId: 0,
-  });
-  if (result.response !== 1) return false;
+ipcMain.handle('fs:trashFile', async (_evt, filePath) => {
   await shell.trashItem(filePath);
   return true;
 });

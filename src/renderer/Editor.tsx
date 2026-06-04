@@ -11,6 +11,7 @@ import { taskCheckboxes, taskEnterKeymap } from './taskCheckboxes.js';
 import { blankLineOutdentKeymap } from './blankLineOutdent.js';
 import { listContinueKeymap } from './listContinue.js';
 import { bulletPoints } from './bulletPoints.js';
+import { codeStyles } from './codeBlocks.js';
 import { wikiLinks } from './wikiLinks.js';
 import { wikiLinkCompletions } from './wikiCompletions.js';
 import { hideMarkdownMarkers } from './hideMarkdownMarkers.js';
@@ -332,6 +333,7 @@ const Editor = forwardRef<any, any>(function Editor(
       markdownLinks,
       taskCheckboxes,
       bulletPoints,
+      codeStyles,
       imageWidgets(
         () => getActiveFilePathRef?.current ?? null,
         () => getVaultPathRef?.current ?? null,
@@ -406,16 +408,16 @@ const Editor = forwardRef<any, any>(function Editor(
         }
       }),
       EditorView.theme({
-        '&': { fontSize: '14px', backgroundColor: 'transparent' },
+        '&': { fontSize: '16px', backgroundColor: 'transparent' },
         '&.cm-focused': { outline: 'none' },
         '.cm-scroller': {
           overflow: 'visible',
-          fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+          fontFamily: 'Inter, sans-serif',
           backgroundColor: 'transparent',
         },
         '.cm-content': { paddingLeft: '0', paddingRight: 'var(--text-col-left)' },
-        '.cm-activeLine': { backgroundColor: 'var(--bg-hover)' },
-        '.cm-activeLineGutter': { backgroundColor: 'var(--bg-hover)' },
+        '.cm-activeLine': { backgroundColor: 'var(--bg-active-line)' },
+        '.cm-activeLineGutter': { backgroundColor: 'var(--bg-active-line)' },
         '.cm-gutters': { backgroundColor: 'transparent', borderRight: 'none' },
         '.cm-lineNumbers': { paddingLeft: '0', paddingRight: '0' },
         // Gutter is 66px wide (hardcoded). CodeMirror's built-in .cm-line

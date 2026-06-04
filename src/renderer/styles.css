@@ -1,3 +1,18 @@
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/fonts/InterVariable.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('./assets/fonts/InterVariable-Italic.woff2') format('woff2');
+}
+
 * { box-sizing: border-box; }
 
 :root {
@@ -10,9 +25,11 @@
   --bg-app: #ffffff;
   --bg-sidebar: #f5f5f7;
   --bg-thin: #ebebef;
+  --bg-code: #f1f1f4;
   --bg-tab-active: #ffffff;
   --bg-tab-hover: rgba(0, 0, 0, 0.03);
   --bg-hover: rgba(0, 0, 0, 0.04);
+  --bg-active-line: rgba(0, 0, 0, 0.02);
   --bg-popover: #ffffff;
   --bg-input: #ffffff;
   --bg-error: #ffe1e1;
@@ -54,9 +71,11 @@
   --bg-app: #1e1e1e;
   --bg-sidebar: #262626;
   --bg-thin: #1c1c1c;
+  --bg-code: #2a2a2a;
   --bg-tab-active: #1e1e1e;
   --bg-tab-hover: rgba(255, 255, 255, 0.04);
   --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active-line: rgba(255, 255, 255, 0.025);
   --bg-popover: #2a2a2a;
   --bg-input: #2a2a2a;
   --bg-error: #4a1f1f;
@@ -94,7 +113,7 @@
 html, body, #root {
   margin: 0;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Inter, sans-serif;
   color: var(--fg-primary);
   background: var(--bg-app);
   overflow: hidden;
@@ -393,7 +412,7 @@ html, body, #root {
   border: 1px solid var(--border);
   border-radius: 6px;
   font-size: 12px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: Inter, sans-serif;
   color: var(--fg-primary);
   pointer-events: none;
   white-space: nowrap;
@@ -800,7 +819,7 @@ html, body, #root {
 
 .cm-content,
 .cm-line {
-  line-height: 1.5;
+  line-height: 1.6;
 }
 
 .cm-task-checkbox {
@@ -816,6 +835,66 @@ html, body, #root {
   text-align: center;
   color: var(--accent);
   font-weight: bold;
+}
+
+/* Inline `code` — monospace pill (codeBlocks.ts). Horizontal padding only so
+   line-height doesn't jump. */
+.cm-inline-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  background: var(--bg-code);
+  border-radius: 4px;
+  padding: 0.05em 0.35em;
+}
+
+/* Fenced ``` block — full-width background box (line decorations, codeBlocks.ts).
+   The emptied fence lines read as the box's top/bottom padding. */
+.cm-code-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.875em;
+  background: var(--bg-code);
+}
+.cm-code-block-first {
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+  position: relative;
+}
+
+/* Copy icon button, top-right of a fenced block (codeBlocks.ts). */
+.cm-code-copy {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-app);
+  color: var(--fg-secondary);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.1s ease, color 0.1s ease;
+}
+.cm-code-copy:hover {
+  opacity: 1;
+  color: var(--fg-primary);
+}
+.cm-code-copy.is-copied {
+  opacity: 1;
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.cm-code-copy.is-failed {
+  opacity: 1;
+  color: var(--fg-error);
+  border-color: var(--border-error);
+}
+.cm-code-block-last {
+  border-bottom-left-radius: 6px;
+  border-bottom-right-radius: 6px;
 }
 
 .cm-wiki-link {

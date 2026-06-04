@@ -557,7 +557,6 @@ export default function App() {
     writeNow,
     openInActiveTab,
     openInNewTab,
-    closeTabsForPath,
     renameTabsPath,
     showError,
     refreshTree,
@@ -679,9 +678,10 @@ export default function App() {
   }, [workspaces, activeWorkspaceId, persistSettings, themeMode, resetTabs]);
 
 
-  // Bulk-delete confirmation state. Set by the action wrapper when DELETE
-  // arrives with >1 path; the ConfirmDialog renders below.
-  const [bulkDeleteCandidates, setBulkDeleteCandidates] = useState<any>(null);
+  // File-delete confirmation state — holds the path(s) the user asked to delete
+  // (one or many). The ConfirmDialog renders below. Folder delete has its own.
+  const [deleteCandidates, setDeleteCandidates] = useState<any>(null);
+  const [folderDeleteCandidate, setFolderDeleteCandidate] = useState<string | null>(null);
   // Whole-tree conflict actions awaiting the user's confirm.
   const [resetToRemotePending, setResetToRemotePending] = useState(false);
   const [keepAllPending, setKeepAllPending] = useState(false);
@@ -735,9 +735,9 @@ export default function App() {
       return;
     }
 
-    if (action === FILE_ACTIONS.DELETE && paths.length > 1) {
-      // Bulk delete: skip per-file OS confirms, show one renderer-side confirm.
-      setBulkDeleteCandidates(paths);
+    if (action === FILE_ACTIONS.DELETE) {
+      // All file deletes (one or many) confirm via the renderer ConfirmDialog.
+      setDeleteCandidates(paths);
       return;
     }
 
@@ -777,10 +777,10 @@ export default function App() {
     else if (choice === 'keep') setKeepAllPending(true);
   }, []);
 
-  const cancelBulkDelete = useCallback(() => setBulkDeleteCandidates(null), []);
-  const confirmBulkDelete = useCallback(async () => {
-    const paths = bulkDeleteCandidates;
-    setBulkDeleteCandidates(null);
+  const cancelDelete = useCallback(() => setDeleteCandidates(null), []);
+  const confirmDelete = useCallback(async () => {
+    const paths = deleteCandidates;
+    setDeleteCandidates(null);
     if (!paths) return;
     try {
       const trashed = await window.api.trashFiles(paths);
@@ -792,7 +792,7 @@ export default function App() {
     } catch (err: any) {
       showError(err.message ?? String(err));
     }
-  }, [bulkDeleteCandidates, closeTabsForPath, linkIndex, fileOps, showError]);
+  }, [deleteCandidates, closeTabsForPath, linkIndex, fileOps, showError]);
 
   const onToggleViewMode = useCallback(async () => {
     const next = viewMode === VIEW_MODES.LIVE ? VIEW_MODES.RAW : VIEW_MODES.LIVE;
@@ -895,29 +895,41 @@ export default function App() {
       } else if (action === FOLDER_ACTIONS.RENAME) {
         fileTreeRef.current?.editNode(folderPath);
       } else if (action === FOLDER_ACTIONS.DELETE) {
-        const confirmed = await window.api.trashFolder(folderPath);
-        if (!confirmed) return;
-        // Sweep up any link-index entries inside the trashed folder so
-        // backlinks/graph drop them immediately (don't wait for the watcher).
-        const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
-        const affected: any[] = [];
-        for (const p of linkIndex.getOutgoingMap().keys()) {
-          if (p.startsWith(prefix)) affected.push(p);
-        }
-        linkIndex.mutate((idx) => {
-          for (const p of affected) idx.removeFile(p);
-        });
-        closeTabsUnderPath(folderPath);
-        // Clear the selected folder if it's the one we just trashed.
-        if (selectedFolderPath && (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix))) {
-          setSelectedFolderPath(null);
-        }
-        await fileOps.treeAndIndexChanged();
+        // Confirmation moves to the renderer ConfirmDialog (confirmFolderDelete).
+        setFolderDeleteCandidate(folderPath);
       }
     } catch (err: any) {
       showError(err.message ?? String(err));
     }
-  }, [addDraftTab, createFolderAt, closeTabsUnderPath, fileOps, linkIndex, selectedFolderPath, showError]);
+  }, [addDraftTab, createFolderAt, showError]);
+
+  const cancelFolderDelete = useCallback(() => setFolderDeleteCandidate(null), []);
+  const confirmFolderDelete = useCallback(async () => {
+    const folderPath = folderDeleteCandidate;
+    setFolderDeleteCandidate(null);
+    if (!folderPath) return;
+    try {
+      await window.api.trashFolder(folderPath);
+      // Sweep up any link-index entries inside the trashed folder so
+      // backlinks/graph drop them immediately (don't wait for the watcher).
+      const prefix = folderPath.endsWith('/') ? folderPath : folderPath + '/';
+      const affected: any[] = [];
+      for (const p of linkIndex.getOutgoingMap().keys()) {
+        if (p.startsWith(prefix)) affected.push(p);
+      }
+      linkIndex.mutate((idx) => {
+        for (const p of affected) idx.removeFile(p);
+      });
+      closeTabsUnderPath(folderPath);
+      // Clear the selected folder if it's the one we just trashed.
+      if (selectedFolderPath && (selectedFolderPath === folderPath || selectedFolderPath.startsWith(prefix))) {
+        setSelectedFolderPath(null);
+      }
+      await fileOps.treeAndIndexChanged();
+    } catch (err: any) {
+      showError(err.message ?? String(err));
+    }
+  }, [folderDeleteCandidate, closeTabsUnderPath, fileOps, linkIndex, selectedFolderPath, showError]);
 
   // ---- new folder from thin sidebar (root level, or current selected folder) ----
   const onNewFolder = useCallback(async () => {
@@ -1713,17 +1725,33 @@ export default function App() {
       )}
 
       <ConfirmDialog
-        open={!!bulkDeleteCandidates}
-        title="Delete files"
+        open={!!deleteCandidates}
+        title={deleteCandidates && deleteCandidates.length > 1 ? 'Delete files' : 'Delete file'}
         message={
-          bulkDeleteCandidates
-            ? `Move ${bulkDeleteCandidates.length} files to the Trash? This cannot be undone from inside the app.`
+          !deleteCandidates
+            ? ''
+            : deleteCandidates.length > 1
+              ? `Move ${deleteCandidates.length} files to the Trash? This can't be undone from inside the app.`
+              : `Move "${basenameOf(deleteCandidates[0])}" to the Trash? This can't be undone from inside the app.`
+        }
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmDelete}
+        onClose={cancelDelete}
+      />
+
+      <ConfirmDialog
+        open={!!folderDeleteCandidate}
+        title="Delete folder"
+        message={
+          folderDeleteCandidate
+            ? `Move "${basenameOf(folderDeleteCandidate)}" and everything inside it to the Trash? This can't be undone from inside the app.`
             : ''
         }
         confirmLabel="Delete"
         destructive
-        onConfirm={confirmBulkDelete}
-        onClose={cancelBulkDelete}
+        onConfirm={confirmFolderDelete}
+        onClose={cancelFolderDelete}
       />
 
       <ConfirmDialog

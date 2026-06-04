@@ -9,7 +9,6 @@ export function useFileOps({
   writeNow,
   openInActiveTab,
   openInNewTab,
-  closeTabsForPath,
   renameTabsPath,
   showError,
   refreshTree,
@@ -65,17 +64,12 @@ export function useFileOps({
         await treeAndIndexChanged();
       } else if (action === FILE_ACTIONS.REVEAL) {
         await window.api.revealInFolder(filePath);
-      } else if (action === FILE_ACTIONS.DELETE) {
-        const confirmed = await window.api.trashFile(filePath);
-        if (!confirmed) return;
-        closeTabsForPath(filePath);
-        linkIndex.removeFile(filePath);
-        await treeAndIndexChanged();
       }
+      // DELETE is handled in App (ConfirmDialog → trashFiles), not here.
     } catch (err: any) {
       showError(err.message ?? String(err));
     }
-  }, [openInNewTab, closeTabsForPath, linkIndex, treeAndIndexChanged, showError]);
+  }, [openInNewTab, linkIndex, treeAndIndexChanged, showError]);
 
   return {
     performRename,
